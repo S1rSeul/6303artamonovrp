@@ -38,9 +38,8 @@ def main():
     metadata = fetch_object_metadata(object_id)
     primary_image = metadata.get('primaryImage')
 
-    filename = str(object_id)
-    img_path = os.path.join(output_dir, filename + '.jpg')
-    json_path = os.path.join(output_dir, filename + '.json')
+    img_path = os.path.join(output_dir, 'image.jpg')
+    json_path = os.path.join(output_dir, 'image.json')
 
     download_image(primary_image, img_path)
     save_metadata(metadata, json_path)
