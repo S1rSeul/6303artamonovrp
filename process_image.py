@@ -5,6 +5,14 @@ import time
 import os
 
 
+SOBEL_X = np.array([[-1, 0, 1],
+                    [-2, 0, 2],
+                    [-1, 0, 1]], dtype=np.float32)
+
+SOBEL_Y = np.array([[-1, -2, -1],
+                    [ 0,  0,  0],
+                    [ 1,  2,  1]], dtype=np.float32)
+
 def manual_grayscale(image):
     b = image[:, :, 0].astype(np.float32)
     g = image[:, :, 1].astype(np.float32)
@@ -17,7 +25,7 @@ def manual_grayscale(image):
 def opencv_grayscale(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-def manual_convolve(image, kernel):
+def manual_convolve(image, kernel, astype = 'int'):
     k_h, k_w = kernel.shape
     pad_h, pad_w = k_h // 2, k_w // 2
 
@@ -25,14 +33,21 @@ def manual_convolve(image, kernel):
 
     windows = sliding_window_view(padded, (k_h, k_w))
     result = np.tensordot(windows, kernel, axes=((2, 3), (0, 1)))
-    return np.clip(result, 0, 255).astype(np.uint8)
 
-def manual_color_convolve(image, kernel):
-    b, g, r = cv2.split(image)
+    if astype == 'int':
+        return np.clip(result, 0, 255).astype(np.uint8)
+    else:
+        return result.astype(np.float32)
 
-    b_conv = manual_convolve(b, kernel)
-    g_conv = manual_convolve(g, kernel)
-    r_conv = manual_convolve(r, kernel)
+def manual_color_convolve(image, kernel, astype = 'int'):
+    if astype == 'int':
+        b, g, r = cv2.split(image)
+    else:
+        b, g, r = cv2.split(image.astype(np.float32) / 255.0)
+
+    b_conv = manual_convolve(b, kernel, astype)
+    g_conv = manual_convolve(g, kernel, astype)
+    r_conv = manual_convolve(r, kernel, astype)
 
     return cv2.merge([b_conv, g_conv, r_conv])
 
@@ -49,6 +64,15 @@ def gaussian_kernel(size, sigma):
 
 def opencv_gaussian(image, ksize, sigma):
     return cv2.GaussianBlur(image, (ksize, ksize), sigma)
+
+def manual_magnitude(gx, gy):
+    return np.sqrt(gx**2 + gy**2)
+
+def normalize_magnitude(magnitude):
+    magnitude_norm = magnitude - magnitude.min()
+    if magnitude_norm.max() > 0:
+        magnitude_norm = magnitude_norm / magnitude_norm.max() * 255
+    return magnitude_norm.astype(np.uint8)
 
 def process_image():
     output_dir = 'paintings'
@@ -108,14 +132,38 @@ def process_image():
     manual_out = os.path.join(output_dir, f"{filename}_gaussian_manual_ks{ksize}_s{sigma}.jpg")
     cv2.imwrite(manual_out, gaussian_manual)
 
-    start_manual = time.perf_counter()
+    start_opencv = time.perf_counter()
     gaussian_opencv = opencv_gaussian(image, ksize, sigma)
-    end_manual = time.perf_counter()
-    time_manual = end_manual - start_manual
-    print(f"OpenCV gaussian: {time_manual:.6f} сек")
+    end_opencv = time.perf_counter()
+    time_opencv = end_opencv - start_opencv
+    print(f"OpenCV gaussian: {time_opencv:.6f} сек")
 
     opencv_out = os.path.join(output_dir, f"{filename}_gaussian_opencv_ks{ksize}_s{sigma}.jpg")
     cv2.imwrite(opencv_out, gaussian_opencv)
+
+    start_manual = time.perf_counter()
+    gx_manual = manual_color_convolve(image, SOBEL_X, 'float')
+    gy_manual = manual_color_convolve(image, SOBEL_Y, 'float')
+    mag_manual = manual_magnitude(gx_manual, gy_manual)
+    end_manual = time.perf_counter()
+    time_manual = end_manual - start_manual
+    print(f"\nРучной sobel: {time_manual:.6f} сек")
+
+    mag_manual_norm = normalize_magnitude(mag_manual)
+    manual_out = os.path.join(output_dir, f"{filename}_sobel_mag_manual.jpg")
+    cv2.imwrite(manual_out, mag_manual_norm)
+
+    start_opencv = time.perf_counter()
+    gx_opencv = cv2.Sobel(image, cv2.CV_32F, 1, 0)
+    gy_opencv = cv2.Sobel(image, cv2.CV_32F, 0, 1)
+    mag_opencv = cv2.magnitude(gx_opencv, gy_opencv)
+    end_opencv = time.perf_counter()
+    time_opencv = end_opencv - start_opencv
+    print(f"OpenCV sobel: {time_opencv:.6f} сек")
+
+    mag_opencv_norm = normalize_magnitude(mag_opencv)
+    opencv_out = os.path.join(output_dir, f"{filename}_sobel_mag_opencv.jpg")
+    cv2.imwrite(opencv_out, mag_opencv_norm)
 
 if __name__ == '__main__':
     process_image()
