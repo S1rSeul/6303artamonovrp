@@ -17,10 +17,35 @@ def manual_grayscale(image):
 def opencv_grayscale(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+def manual_convolve(image, kernel):
+    k_h, k_w = kernel.shape
+    pad_h, pad_w = k_h // 2, k_w // 2
+
+    padded = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant', constant_values=0)
+
+    windows = sliding_window_view(padded, (k_h, k_w))
+    result = np.tensordot(windows, kernel, axes=((2, 3), (0, 1)))
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+def manual_color_convolve(image, kernel):
+    b, g, r = cv2.split(image)
+
+    b_conv = manual_convolve(b, kernel)
+    g_conv = manual_convolve(g, kernel)
+    r_conv = manual_convolve(r, kernel)
+
+    return cv2.merge([b_conv, g_conv, r_conv])
+
+def opencv_convolve(image, kernel):
+    return cv2.filter2D(image, ddepth=-1, kernel=kernel)
+
 def process_image():
     output_dir = 'paintings'
     filename = 'image'
     image_path = 'paintings/image.jpg'
+    kernel = np.array([[0, -1, 0],
+                       [-1, 5, -1],
+                       [0, -1, 0]], dtype=np.float32)
     os.makedirs(output_dir, exist_ok=True)
     image = cv2.imread(image_path)
 
@@ -41,6 +66,24 @@ def process_image():
 
     opencv_out = os.path.join(output_dir, f"{filename}_grayscale_opencv.jpg")
     cv2.imwrite(opencv_out, gray_opencv)
+
+    start_manual = time.perf_counter()
+    convolve_manual = manual_color_convolve(image, kernel)
+    end_manual = time.perf_counter()
+    time_manual = end_manual - start_manual
+    print(f"\nРучной convolve: {time_manual:.6f} сек")
+
+    manual_out = os.path.join(output_dir, f"{filename}_convolve_manual.jpg")
+    cv2.imwrite(manual_out, convolve_manual)
+
+    start_opencv = time.perf_counter()
+    convolve_opencv = opencv_convolve(image, kernel)
+    end_opencv = time.perf_counter()
+    time_opencv = end_opencv - start_opencv
+    print(f"OpenCV convolve: {time_opencv:.6f} сек")
+
+    opencv_out = os.path.join(output_dir, f"{filename}_convolve_opencv.jpg")
+    cv2.imwrite(opencv_out, convolve_opencv)
 
 if __name__ == '__main__':
     process_image()
