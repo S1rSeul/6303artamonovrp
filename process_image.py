@@ -13,6 +13,7 @@ SOBEL_Y = np.array([[-1, -2, -1],
                     [ 0,  0,  0],
                     [ 1,  2,  1]], dtype=np.float32)
 
+
 def manual_grayscale(image):
     b = image[:, :, 0].astype(np.float32)
     g = image[:, :, 1].astype(np.float32)
@@ -22,8 +23,10 @@ def manual_grayscale(image):
     gray = np.clip(gray, 0, 255).astype(np.uint8)
     return gray
 
+
 def opencv_grayscale(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
 
 def manual_convolve(image, kernel, astype = 'int'):
     k_h, k_w = kernel.shape
@@ -39,6 +42,7 @@ def manual_convolve(image, kernel, astype = 'int'):
     else:
         return result.astype(np.float32)
 
+
 def manual_color_convolve(image, kernel, astype = 'int'):
     if astype == 'int':
         b, g, r = cv2.split(image)
@@ -51,8 +55,10 @@ def manual_color_convolve(image, kernel, astype = 'int'):
 
     return cv2.merge([b_conv, g_conv, r_conv])
 
+
 def opencv_convolve(image, kernel):
     return cv2.filter2D(image, ddepth=-1, kernel=kernel)
+
 
 def gaussian_kernel(size, sigma):
     k = size // 2
@@ -62,11 +68,14 @@ def gaussian_kernel(size, sigma):
     kernel /= kernel.sum()
     return kernel.astype(np.float32)
 
+
 def opencv_gaussian(image, ksize, sigma):
     return cv2.GaussianBlur(image, (ksize, ksize), sigma)
 
+
 def manual_magnitude(gx, gy):
     return np.sqrt(gx**2 + gy**2)
+
 
 def normalize_magnitude(magnitude):
     magnitude_norm = magnitude - magnitude.min()
@@ -74,11 +83,22 @@ def normalize_magnitude(magnitude):
         magnitude_norm = magnitude_norm / magnitude_norm.max() * 255
     return magnitude_norm.astype(np.uint8)
 
+
+def time_and_save(function, image, out_path, description, *args, **kwargs):
+    start = time.perf_counter()
+    result = function(image, *args, **kwargs)
+    end = time.perf_counter()
+    print(f"{description}: {end - start:.6f} сек")
+    if out_path is not None:
+        cv2.imwrite(out_path, result)
+    return result
+
+
 def process_image():
     output_dir = 'paintings'
     filename = 'image'
     image_path = 'paintings/image.jpg'
-    kernel = np.array([[0, -1, 0],
+    sharpen_kernel = np.array([[0, -1, 0],
                        [-1, 5, -1],
                        [0, -1, 0]], dtype=np.float32)
     ksize = 5
@@ -86,84 +106,59 @@ def process_image():
     os.makedirs(output_dir, exist_ok=True)
     image = cv2.imread(image_path)
 
-    start_manual = time.perf_counter()
-    gray_manual = manual_grayscale(image)
-    end_manual = time.perf_counter()
-    time_manual = end_manual - start_manual
-    print(f"Ручной grayscale: {time_manual:.6f} сек")
+    time_and_save(manual_grayscale, image,
+                                f"{output_dir}/{filename}_grayscale_manual.jpg",
+                                "Ручной grayscale")
+    time_and_save(opencv_grayscale, image,
+                                f"{output_dir}/{filename}_grayscale_opencv.jpg",
+                                "OpenCV grayscale")
 
-    manual_out = os.path.join(output_dir, f"{filename}_grayscale_manual.jpg")
-    cv2.imwrite(manual_out, gray_manual)
+    time_and_save(manual_color_convolve, image,
+                                    f"{output_dir}/{filename}_convolve_manual.jpg",
+                                    "\nРучной convolve",
+                                    kernel=sharpen_kernel)
 
-    start_opencv = time.perf_counter()
-    gray_opencv = opencv_grayscale(image)
-    end_opencv = time.perf_counter()
-    time_opencv = end_opencv - start_opencv
-    print(f"OpenCV grayscale: {time_opencv:.6f} сек")
+    time_and_save(opencv_convolve, image,
+                                    f"{output_dir}/{filename}_convolve_opencv.jpg",
+                                    "OpenCV convolve",
+                                    kernel=sharpen_kernel)
 
-    opencv_out = os.path.join(output_dir, f"{filename}_grayscale_opencv.jpg")
-    cv2.imwrite(opencv_out, gray_opencv)
+    gauss_kernel = gaussian_kernel(ksize, sigma)
 
-    start_manual = time.perf_counter()
-    convolve_manual = manual_color_convolve(image, kernel)
-    end_manual = time.perf_counter()
-    time_manual = end_manual - start_manual
-    print(f"\nРучной convolve: {time_manual:.6f} сек")
+    time_and_save(manual_color_convolve, image,
+                                    f"{output_dir}/{filename}_gaussian_manual_ks{ksize}_s{sigma}.jpg",
+                                    "\nРучной gaussian",
+                                    kernel=gauss_kernel)
 
-    manual_out = os.path.join(output_dir, f"{filename}_convolve_manual.jpg")
-    cv2.imwrite(manual_out, convolve_manual)
+    time_and_save(opencv_gaussian, image,
+                                    f"{output_dir}/{filename}_gaussian_opencv_ks{ksize}_s{sigma}.jpg",
+                                    "OpenCV gaussian",
+                                    ksize=ksize, sigma=sigma)
 
-    start_opencv = time.perf_counter()
-    convolve_opencv = opencv_convolve(image, kernel)
-    end_opencv = time.perf_counter()
-    time_opencv = end_opencv - start_opencv
-    print(f"OpenCV convolve: {time_opencv:.6f} сек")
-
-    opencv_out = os.path.join(output_dir, f"{filename}_convolve_opencv.jpg")
-    cv2.imwrite(opencv_out, convolve_opencv)
-
-    start_manual = time.perf_counter()
-    kernel = gaussian_kernel(ksize, sigma)
-    gaussian_manual = manual_color_convolve(image, kernel)
-    end_manual = time.perf_counter()
-    time_manual = end_manual - start_manual
-    print(f"\nРучной gaussian: {time_manual:.6f} сек")
-
-    manual_out = os.path.join(output_dir, f"{filename}_gaussian_manual_ks{ksize}_s{sigma}.jpg")
-    cv2.imwrite(manual_out, gaussian_manual)
-
-    start_opencv = time.perf_counter()
-    gaussian_opencv = opencv_gaussian(image, ksize, sigma)
-    end_opencv = time.perf_counter()
-    time_opencv = end_opencv - start_opencv
-    print(f"OpenCV gaussian: {time_opencv:.6f} сек")
-
-    opencv_out = os.path.join(output_dir, f"{filename}_gaussian_opencv_ks{ksize}_s{sigma}.jpg")
-    cv2.imwrite(opencv_out, gaussian_opencv)
-
-    start_manual = time.perf_counter()
-    gx_manual = manual_color_convolve(image, SOBEL_X, 'float')
-    gy_manual = manual_color_convolve(image, SOBEL_Y, 'float')
+    gx_manual = time_and_save(manual_color_convolve, image,
+                              None,
+                              "\nРучной sobel Gx",
+                              kernel=SOBEL_X, astype='float')
+    gy_manual = time_and_save(manual_color_convolve, image,
+                              None,
+                              "Ручной sobel Gy",
+                              kernel=SOBEL_Y, astype='float')
     mag_manual = manual_magnitude(gx_manual, gy_manual)
-    end_manual = time.perf_counter()
-    time_manual = end_manual - start_manual
-    print(f"\nРучной sobel: {time_manual:.6f} сек")
+    mag_norm = normalize_magnitude(mag_manual)
+    cv2.imwrite(f"{output_dir}/{filename}_sobel_mag_manual.jpg", mag_norm)
 
-    mag_manual_norm = normalize_magnitude(mag_manual)
-    manual_out = os.path.join(output_dir, f"{filename}_sobel_mag_manual.jpg")
-    cv2.imwrite(manual_out, mag_manual_norm)
-
-    start_opencv = time.perf_counter()
-    gx_opencv = cv2.Sobel(image, cv2.CV_32F, 1, 0)
-    gy_opencv = cv2.Sobel(image, cv2.CV_32F, 0, 1)
+    gx_opencv = time_and_save(cv2.Sobel, image,
+                              None,
+                              "OpenCV sobel Gx",
+                              ddepth=cv2.CV_32F, dx=1, dy=0)
+    gy_opencv = time_and_save(cv2.Sobel, image,
+                              None,
+                              "OpenCV sobel Gy",
+                              ddepth=cv2.CV_32F, dx=0, dy=1)
     mag_opencv = cv2.magnitude(gx_opencv, gy_opencv)
-    end_opencv = time.perf_counter()
-    time_opencv = end_opencv - start_opencv
-    print(f"OpenCV sobel: {time_opencv:.6f} сек")
+    mag_norm_opencv = normalize_magnitude(mag_opencv)
+    cv2.imwrite(f"{output_dir}/{filename}_sobel_mag_opencv.jpg", mag_norm_opencv)
 
-    mag_opencv_norm = normalize_magnitude(mag_opencv)
-    opencv_out = os.path.join(output_dir, f"{filename}_sobel_mag_opencv.jpg")
-    cv2.imwrite(opencv_out, mag_opencv_norm)
 
 if __name__ == '__main__':
     process_image()
