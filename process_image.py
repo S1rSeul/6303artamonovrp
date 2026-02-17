@@ -39,6 +39,17 @@ def manual_color_convolve(image, kernel):
 def opencv_convolve(image, kernel):
     return cv2.filter2D(image, ddepth=-1, kernel=kernel)
 
+def gaussian_kernel(size, sigma):
+    k = size // 2
+    x, y = np.mgrid[-k:k+1, -k:k+1]
+    kernel = np.exp(-(x**2 + y**2) / (2 * sigma**2))
+    kernel /= 2 * np.pi * sigma**2
+    kernel /= kernel.sum()
+    return kernel.astype(np.float32)
+
+def opencv_gaussian(image, ksize, sigma):
+    return cv2.GaussianBlur(image, (ksize, ksize), sigma)
+
 def process_image():
     output_dir = 'paintings'
     filename = 'image'
@@ -46,6 +57,8 @@ def process_image():
     kernel = np.array([[0, -1, 0],
                        [-1, 5, -1],
                        [0, -1, 0]], dtype=np.float32)
+    ksize = 5
+    sigma = 1.0
     os.makedirs(output_dir, exist_ok=True)
     image = cv2.imread(image_path)
 
@@ -84,6 +97,25 @@ def process_image():
 
     opencv_out = os.path.join(output_dir, f"{filename}_convolve_opencv.jpg")
     cv2.imwrite(opencv_out, convolve_opencv)
+
+    start_manual = time.perf_counter()
+    kernel = gaussian_kernel(ksize, sigma)
+    gaussian_manual = manual_color_convolve(image, kernel)
+    end_manual = time.perf_counter()
+    time_manual = end_manual - start_manual
+    print(f"\nРучной gaussian: {time_manual:.6f} сек")
+
+    manual_out = os.path.join(output_dir, f"{filename}_gaussian_manual_ks{ksize}_s{sigma}.jpg")
+    cv2.imwrite(manual_out, gaussian_manual)
+
+    start_manual = time.perf_counter()
+    gaussian_opencv = opencv_gaussian(image, ksize, sigma)
+    end_manual = time.perf_counter()
+    time_manual = end_manual - start_manual
+    print(f"OpenCV gaussian: {time_manual:.6f} сек")
+
+    opencv_out = os.path.join(output_dir, f"{filename}_gaussian_opencv_ks{ksize}_s{sigma}.jpg")
+    cv2.imwrite(opencv_out, gaussian_opencv)
 
 if __name__ == '__main__':
     process_image()
