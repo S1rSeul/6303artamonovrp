@@ -96,6 +96,41 @@ def opencv_gamma_correction(image, gamma):
     return (corrected * 255).astype(np.uint8)
 
 
+def manual_equalize_hist(image):
+    hist, bins = np.histogram(image.flatten(), 256, (0, 256))
+
+    cdf = hist.cumsum()
+    cdf_norm = cdf * 255 / cdf[-1]
+
+    lut = np.round(cdf_norm).astype(np.uint8)
+
+    return lut[image]
+
+
+def manual_equalize_hist_color(image):
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    l_eq = manual_equalize_hist(l)
+
+    lab_eq = cv2.merge([l_eq, a, b])
+    return cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+
+
+def opencv_equalize_hist(image):
+    return cv2.equalizeHist(image)
+
+
+def opencv_equalize_hist_color(image):
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    l_eq = cv2.equalizeHist(l)
+
+    lab_eq = cv2.merge([l_eq, a, b])
+    return cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+
+
 def time_and_save(function, image, out_path, description, *args, **kwargs):
     start = time.perf_counter()
     result = function(image, *args, **kwargs)
@@ -181,6 +216,14 @@ def process_image():
                   f"{output_dir}/{filename}_gamma_opencv_g{gamma}.jpg",
                   "OpenCV гамма-коррекция",
                   gamma=gamma)
+
+    time_and_save(manual_equalize_hist_color, image,
+                  f"{output_dir}/{filename}_eq_hist_manual.jpg",
+                  "\nРучное выравнивание гистограммы")
+
+    time_and_save(opencv_equalize_hist_color, image,
+                  f"{output_dir}/{filename}_eq_hist_opencv.jpg",
+                  "OpenCV выравнивание гистограммы")
 
 
 if __name__ == '__main__':
