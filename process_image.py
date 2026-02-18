@@ -84,6 +84,18 @@ def normalize_magnitude(magnitude):
     return magnitude_norm.astype(np.uint8)
 
 
+def manual_gamma_correction(image, gamma):
+    image = image.astype(np.float32) / 255.0
+    corrected = np.power(image, gamma)
+    return (corrected * 255).astype(np.uint8)
+
+
+def opencv_gamma_correction(image, gamma):
+    image = image.astype(np.float32) / 255.0
+    corrected = cv2.pow(image, gamma)
+    return (corrected * 255).astype(np.uint8)
+
+
 def time_and_save(function, image, out_path, description, *args, **kwargs):
     start = time.perf_counter()
     result = function(image, *args, **kwargs)
@@ -103,6 +115,7 @@ def process_image():
                        [0, -1, 0]], dtype=np.float32)
     ksize = 5
     sigma = 1.0
+    gamma = 0.5
     os.makedirs(output_dir, exist_ok=True)
     image = cv2.imread(image_path)
 
@@ -158,6 +171,16 @@ def process_image():
     mag_opencv = cv2.magnitude(gx_opencv, gy_opencv)
     mag_norm_opencv = normalize_magnitude(mag_opencv)
     cv2.imwrite(f"{output_dir}/{filename}_sobel_mag_opencv.jpg", mag_norm_opencv)
+
+    time_and_save(manual_gamma_correction, image,
+                  f"{output_dir}/{filename}_gamma_manual_g{gamma}.jpg",
+                  "\nРучная гамма-коррекция",
+                  gamma=gamma)
+
+    time_and_save(opencv_gamma_correction, image,
+                  f"{output_dir}/{filename}_gamma_opencv_g{gamma}.jpg",
+                  "OpenCV гамма-коррекция",
+                  gamma=gamma)
 
 
 if __name__ == '__main__':
