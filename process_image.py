@@ -32,7 +32,7 @@ def manual_convolve(image, kernel, astype = 'int'):
     k_h, k_w = kernel.shape
     pad_h, pad_w = k_h // 2, k_w // 2
 
-    padded = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant', constant_values=0)
+    padded = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='reflect')
 
     windows = sliding_window_view(padded, (k_h, k_w))
     result = np.tensordot(windows, kernel, axes=((2, 3), (0, 1)))
