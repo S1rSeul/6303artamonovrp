@@ -73,15 +73,47 @@ def gaussian_kernel(size: int, sigma: float) -> Kernel:
     return kernel.astype(np.float32)
 
 
+def manual_gaussian(image: ImageU8, ksize: int, sigma: float) -> ImageU8:
+    kernel = gaussian_kernel(ksize, sigma)
+
+    return manual_color_convolve(image, kernel)
+
+
 def opencv_gaussian(image: ImageU8, ksize: int, sigma: float) -> ImageU8:
     return cv2.GaussianBlur(image, (ksize, ksize), sigma)
 
 
-def manual_magnitude(gx: ImageF32, gy: ImageF32) -> ImageF32:
-    return np.sqrt(gx ** 2 + gy ** 2)
+def manual_sobel(image: ImageU8) -> ImageU8:
+    sobel_x = np.array([
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1],
+    ], dtype=np.float32)
+
+    sobel_y = np.array([
+        [-1, -2, -1],
+        [0, 0, 0],
+        [1, 2, 1],
+    ], dtype=np.float32)
+
+    gx = manual_color_convolve(image, sobel_x, 'float')
+    gy = manual_color_convolve(image, sobel_y, 'float')
+
+    magnitude = np.sqrt(gx ** 2 + gy ** 2)
+
+    magnitude_norm = magnitude - magnitude.min()
+    if magnitude_norm.max() > 0:
+        magnitude_norm = magnitude_norm / magnitude_norm.max() * 255
+
+    return magnitude_norm.astype(np.uint8)
 
 
-def normalize_magnitude(magnitude: ImageF32) -> ImageU8:
+def opencv_sobel(image: ImageU8) -> ImageU8:
+    gx = cv2.Sobel(image, ddepth=cv2.CV_32F, dx=1, dy=0)
+    gy = cv2.Sobel(image, ddepth=cv2.CV_32F, dx=0, dy=1)
+
+    magnitude = cv2.magnitude(gx, gy)
+
     magnitude_norm = magnitude - magnitude.min()
     if magnitude_norm.max() > 0:
         magnitude_norm = magnitude_norm / magnitude_norm.max() * 255
@@ -160,7 +192,7 @@ def process_image() -> None:
         [-1, 5, -1],
         [0, -1, 0],
     ], dtype=np.float32)
-    ksize = 5
+    ksize = 3
     sigma = 1.0
     gamma = 0.5
     os.makedirs(output_dir, exist_ok=True)
@@ -183,53 +215,23 @@ def process_image() -> None:
                   "OpenCV convolve",
                   kernel=sharpen_kernel)
 
-    gauss_kernel = gaussian_kernel(ksize, sigma)
-
-    time_and_save(manual_color_convolve, image,
+    time_and_save(manual_gaussian, image,
                   f"{output_dir}/{filename}_gaussian_manual_ks{ksize}_s{sigma}.jpg",
                   "\nРучной gaussian",
-                  kernel=gauss_kernel)
+                  ksize=ksize, sigma=sigma)
 
     time_and_save(opencv_gaussian, image,
                   f"{output_dir}/{filename}_gaussian_opencv_ks{ksize}_s{sigma}.jpg",
                   "OpenCV gaussian",
                   ksize=ksize, sigma=sigma)
 
-    sobel_x = np.array([
-        [-1, 0, 1],
-        [-2, 0, 2],
-        [-1, 0, 1],
-    ], dtype=np.float32)
+    time_and_save(manual_sobel, image,
+                  f"{output_dir}/{filename}_sobel_mag_manual.jpg",
+                  "\nРучной sobel")
 
-    sobel_y = np.array([
-        [-1, -2, -1],
-        [0, 0, 0],
-        [1, 2, 1],
-    ], dtype=np.float32)
-
-    gx_manual = time_and_save(manual_color_convolve, image,
-                              None,
-                              "\nРучной sobel Gx",
-                              kernel=sobel_x, astype='float')
-    gy_manual = time_and_save(manual_color_convolve, image,
-                              None,
-                              "Ручной sobel Gy",
-                              kernel=sobel_y, astype='float')
-    mag_manual = manual_magnitude(gx_manual, gy_manual)
-    mag_norm = normalize_magnitude(mag_manual)
-    cv2.imwrite(f"{output_dir}/{filename}_sobel_mag_manual.jpg", mag_norm)
-
-    gx_opencv = time_and_save(cv2.Sobel, image,
-                              None,
-                              "OpenCV sobel Gx",
-                              ddepth=cv2.CV_32F, dx=1, dy=0)
-    gy_opencv = time_and_save(cv2.Sobel, image,
-                              None,
-                              "OpenCV sobel Gy",
-                              ddepth=cv2.CV_32F, dx=0, dy=1)
-    mag_opencv = cv2.magnitude(gx_opencv, gy_opencv)
-    mag_norm_opencv = normalize_magnitude(mag_opencv)
-    cv2.imwrite(f"{output_dir}/{filename}_sobel_mag_opencv.jpg", mag_norm_opencv)
+    time_and_save(opencv_sobel, image,
+                  f"{output_dir}/{filename}_sobel_mag_opencv.jpg",
+                  "OpenCV sobel")
 
     time_and_save(manual_gamma_correction, image,
                   f"{output_dir}/{filename}_gamma_manual_g{gamma}.jpg",
