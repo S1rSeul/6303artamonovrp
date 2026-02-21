@@ -134,7 +134,7 @@ def opencv_gamma_correction(image: ImageU8, gamma: float) -> ImageU8:
 
 
 def manual_equalize_hist(image: ImageU8) -> ImageU8:
-    hist, bins = np.histogram(image.flatten(), 256, (0, 256))
+    hist = np.histogram(image.flatten(), 256, (0, 256))[0]
 
     cdf = hist.cumsum()
     cdf_norm = cdf * 255 / cdf[-1]
