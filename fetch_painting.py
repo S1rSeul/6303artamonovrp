@@ -2,45 +2,47 @@ import csv
 import json
 import os
 import random
-import urllib.request
 
 
-def get_painting(csv_path: str) -> dict:
+import requests
+
+
+def get_painting_id(csv_path: str) -> str:
     paintings = []
-    with (open(csv_path, mode='r', encoding='utf-8') as f):
-        reader = csv.DictReader(f)
-        for row in reader:
+    with open(csv_path, mode='r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
             if (row.get('Classification') == 'Paintings'
                     and row.get('Is Public Domain') == 'True'):
-                paintings.append(row)
+                paintings.append(row.get("Object ID"))
 
     return random.choice(paintings)
 
 
-def fetch_object_metadata(object_id: int) -> dict:
+def fetch_object_metadata(object_id: str) -> dict:
     url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
-    with urllib.request.urlopen(url) as response:
-        data = json.loads(response.read().decode('utf-8'))
-
-    return data
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.json()
 
 
 def download_image(image_url: str, save_path: str) -> None:
-    urllib.request.urlretrieve(image_url, save_path)
+    response = requests.get(image_url)
+    response.raise_for_status()
+
+    with open(save_path, 'wb') as f:
+        f.write(response.content)
 
 
 def save_metadata(data: dict, save_path: str) -> None:
-    with open(save_path, 'w', encoding='utf-8') as path:
-        json.dump(data, path, indent=2, ensure_ascii=False)
+    with open(save_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def main() -> None:
     csv_path = 'MetObjects.csv'
     output_dir = 'paintings'
     os.makedirs(output_dir, exist_ok=True)
-    painting = get_painting(csv_path)
-
-    object_id = painting.get("Object ID")
+    object_id = get_painting_id(csv_path)
 
     metadata = fetch_object_metadata(object_id)
     primary_image = metadata.get('primaryImage')

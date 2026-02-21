@@ -1,4 +1,4 @@
 .project_venv/
 .flake8
-/paintings
+paintings/
 MetObjects.csv

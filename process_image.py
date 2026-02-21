@@ -15,13 +15,8 @@ Kernel = NDArray[np.float32]
 
 
 def manual_grayscale(image: ImageU8) -> ImageU8:
-    b = image[:, :, 0].astype(np.float32)
-    g = image[:, :, 1].astype(np.float32)
-    r = image[:, :, 2].astype(np.float32)
-
-    gray = 0.299 * r + 0.587 * g + 0.114 * b
-    gray = np.clip(gray, 0, 255).astype(np.uint8)
-    return gray
+    weights = np.array((0.114, 0.587, 0.299), dtype=np.float32)
+    return np.clip(image @ weights, 0, 255).astype(np.uint8)
 
 
 def opencv_grayscale(image: ImageU8) -> ImageU8:
@@ -29,35 +24,24 @@ def opencv_grayscale(image: ImageU8) -> ImageU8:
 
 
 def manual_convolve(image: ImageU8,
-                    kernel: Kernel,
-                    astype: str = 'int') -> ImageU8 | ImageF32:
+                        kernel: Kernel,
+                        astype: str = 'int') -> ImageU8 | ImageF32:
     k_h, k_w = kernel.shape
     pad_h, pad_w = k_h // 2, k_w // 2
 
-    padded = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='reflect')
+    padded_width = [(pad_h, pad_h), (pad_w, pad_w)]
+    if image.ndim == 3:
+        padded_width.append((0, 0))
 
-    windows = sliding_window_view(padded, (k_h, k_w))
-    result = np.tensordot(windows, kernel, axes=((2, 3), (0, 1)))
+    padded = np.pad(image, padded_width, mode='reflect')
+
+    windows = sliding_window_view(padded, (k_h, k_w), axis=(0, 1))
+    result = np.tensordot(windows, kernel, axes=((-2, -1), (0, 1)))
 
     if astype == 'int':
         return np.clip(result, 0, 255).astype(np.uint8)
     else:
         return result.astype(np.float32)
-
-
-def manual_color_convolve(image: ImageU8,
-                          kernel: Kernel,
-                          astype: str = 'int') -> ImageU8 | ImageF32:
-    if astype == 'int':
-        b, g, r = cv2.split(image)
-    else:
-        b, g, r = cv2.split(image.astype(np.float32) / 255.0)
-
-    b_conv = manual_convolve(b, kernel, astype)
-    g_conv = manual_convolve(g, kernel, astype)
-    r_conv = manual_convolve(r, kernel, astype)
-
-    return cv2.merge([b_conv, g_conv, r_conv])
 
 
 def opencv_convolve(image: ImageU8, kernel: Kernel) -> ImageU8:
@@ -68,7 +52,6 @@ def gaussian_kernel(size: int, sigma: float) -> Kernel:
     k = size // 2
     x, y = np.mgrid[-k:k + 1, -k:k + 1]
     kernel = np.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
-    kernel /= 2 * np.pi * sigma ** 2
     kernel /= kernel.sum()
     return kernel.astype(np.float32)
 
@@ -76,7 +59,7 @@ def gaussian_kernel(size: int, sigma: float) -> Kernel:
 def manual_gaussian(image: ImageU8, ksize: int, sigma: float) -> ImageU8:
     kernel = gaussian_kernel(ksize, sigma)
 
-    return manual_color_convolve(image, kernel)
+    return manual_convolve(image, kernel)
 
 
 def opencv_gaussian(image: ImageU8, ksize: int, sigma: float) -> ImageU8:
@@ -96,16 +79,12 @@ def manual_sobel(image: ImageU8) -> ImageU8:
         [1, 2, 1],
     ], dtype=np.float32)
 
-    gx = manual_color_convolve(image, sobel_x, 'float')
-    gy = manual_color_convolve(image, sobel_y, 'float')
+    gx = manual_convolve(image, sobel_x, 'float')
+    gy = manual_convolve(image, sobel_y, 'float')
 
     magnitude = np.sqrt(gx ** 2 + gy ** 2)
 
-    magnitude_norm = magnitude - magnitude.min()
-    if magnitude_norm.max() > 0:
-        magnitude_norm = magnitude_norm / magnitude_norm.max() * 255
-
-    return magnitude_norm.astype(np.uint8)
+    return magnitude.astype(np.uint8)
 
 
 def opencv_sobel(image: ImageU8) -> ImageU8:
@@ -114,22 +93,18 @@ def opencv_sobel(image: ImageU8) -> ImageU8:
 
     magnitude = cv2.magnitude(gx, gy)
 
-    magnitude_norm = magnitude - magnitude.min()
-    if magnitude_norm.max() > 0:
-        magnitude_norm = magnitude_norm / magnitude_norm.max() * 255
-
-    return magnitude_norm.astype(np.uint8)
+    return magnitude.astype(np.uint8)
 
 
 def manual_gamma_correction(image: ImageU8, gamma: float) -> ImageU8:
     image = image.astype(np.float32) / 255.0
-    corrected = np.power(image, gamma)
+    corrected = np.power(image, 1/gamma)
     return (corrected * 255).astype(np.uint8)
 
 
 def opencv_gamma_correction(image: ImageU8, gamma: float) -> ImageU8:
     image = image.astype(np.float32) / 255.0
-    corrected = cv2.pow(image, gamma)
+    corrected = cv2.pow(image, 1/gamma)
     return (corrected * 255).astype(np.uint8)
 
 
@@ -186,7 +161,7 @@ def time_and_save(function: Callable[..., Any],
 def process_image() -> None:
     output_dir = 'paintings'
     filename = 'image'
-    image_path = 'paintings/image.jpg'
+    image_path = f"{output_dir}/{filename}.jpg"
     sharpen_kernel = np.array([
         [0, -1, 0],
         [-1, 5, -1],
@@ -205,7 +180,7 @@ def process_image() -> None:
                   f"{output_dir}/{filename}_grayscale_opencv.jpg",
                   "OpenCV grayscale")
 
-    time_and_save(manual_color_convolve, image,
+    time_and_save(manual_convolve, image,
                   f"{output_dir}/{filename}_convolve_manual.jpg",
                   "\nРучной convolve",
                   kernel=sharpen_kernel)
