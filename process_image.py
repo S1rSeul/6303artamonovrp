@@ -24,8 +24,8 @@ def opencv_grayscale(image: ImageU8) -> ImageU8:
 
 
 def manual_convolve(image: ImageU8,
-                        kernel: Kernel,
-                        astype: str = 'int') -> ImageU8 | ImageF32:
+                    kernel: Kernel,
+                    astype: str = 'int') -> ImageU8 | ImageF32:
     k_h, k_w = kernel.shape
     pad_h, pad_w = k_h // 2, k_w // 2
 
