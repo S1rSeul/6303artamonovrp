@@ -1,5 +1,6 @@
 import csv
 import json
+import logging
 import os
 import random
 import time
@@ -17,12 +18,15 @@ ImageU8 = NDArray[np.uint8]
 ImageF32 = NDArray[np.float32]
 
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
 def timeit(func: Callable) -> Callable:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         start = time.perf_counter()
         result = func(*args, **kwargs)
         end = time.perf_counter()
-        print(f"[TIME] {func.__name__} выполнена за {end - start:.6f} секунд")
+        logging.info(f"[TIME] {func.__name__} выполнена за {end - start:.6f} секунд")
         return result
     return wrapper
 
@@ -74,8 +78,8 @@ class Artwork:
         return self._metadata
 
     def __str__(self) -> str:
-        title = self._metadata.get('Title', 'Неизвестен')
-        artist = self._metadata.get('Artist Display Name', 'Неизвестен')
+        title = self._metadata.get('title', 'Неизвестен')
+        artist = self._metadata.get('artistDisplayName', 'Неизвестен')
         return f"Artwork: '{title}' by {artist}"
 
     def __add__(self, other: 'Artwork') -> 'Artwork':
@@ -217,15 +221,11 @@ class ImageProcessor:
         self._output_dir = output_dir
         os.makedirs(self._output_dir, exist_ok=True)
 
-    @staticmethod
-    def _log(message: str) -> None:
-        print(f"[IMAGE PROCESSOR] {message}")
-
     @timeit
     def download_random_painting(self) -> Artwork:
         object_id = get_painting_id(self._csv_path)
-        self._log(f"Выбрана картина ID {object_id}")
-        self._log(f"Загрузка метаданных для объекта {object_id}")
+        logging.info(f"Выбрана картина ID {object_id}")
+        logging.info(f"Загрузка метаданных для объекта {object_id}")
         metadata = fetch_object_metadata(object_id)
 
         primary_image = metadata.get('primaryImage')
@@ -233,27 +233,27 @@ class ImageProcessor:
             raise ValueError(f"У объекта {object_id} отсутствует primaryImage")
 
         img_path = os.path.join(self._output_dir, 'image.jpg')
-        self._log(f"Скачивание изображения: {primary_image}")
+        logging.info(f"Скачивание изображения: {primary_image}")
         download_image(primary_image, img_path)
-        self._log(f"Изображение сохранено в {img_path}")
+        logging.info(f"Изображение сохранено в {img_path}")
 
         image = cv2.imread(img_path)
 
         json_path = os.path.join(self._output_dir, 'image.json')
         save_metadata(metadata, json_path)
-        self._log(f"Метаданные сохранены в {json_path}")
+        logging.info(f"Метаданные сохранены в {json_path}")
 
         artwork = Artwork(image, metadata)
-        self._log(f"Создан объект: {artwork}")
+        logging.info(f"Создан объект: {artwork}")
         return artwork
 
     @timeit
     def process_artwork(self, artwork: Artwork, prefix: str = '') -> None:
-        self._log(f"Начало обработки изображения с префиксом '{prefix}'...")
+        logging.info(f"Начало обработки изображения с префиксом '{prefix}'...")
 
         orig_path = os.path.join(self._output_dir, f'image_{prefix}_original.jpg')
         cv2.imwrite(orig_path, artwork.image)
-        self._log(f"Оригинал изображения сохранен в {orig_path}")
+        logging.info(f"Оригинал изображения сохранен в {orig_path}")
 
         sharpen_kernel = np.array([
             [0, -1, 0],
@@ -268,7 +268,7 @@ class ImageProcessor:
             start = time.perf_counter()
             result = func(**kwargs)
             end = time.perf_counter()
-            print(f"[TIME] {description}: {end - start:.6f} секунд")
+            logging.info(f"[TIME] {description}: {end - start:.6f} секунд")
             out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
             cv2.imwrite(out_path, result)
 
@@ -338,35 +338,35 @@ class ImageProcessor:
             "OpenCV выравнивание гистограммы",
         )
 
-        self._log(f"Обработка с префиксом '{prefix}' завершена.")
+        logging.info(f"Обработка с префиксом '{prefix}' завершена.")
 
     def run_pipeline(self) -> None:
-        self._log("Запуск пайплайна обработки изображений")
+        logging.info("Запуск пайплайна обработки изображений")
 
-        self._log("Обработка оригинального изображения")
+        logging.info("Обработка оригинального изображения")
         artwork_original = self.download_random_painting()
         self.process_artwork(artwork_original, prefix='color')
-        self._log("Обработка оригинального изображения завершена")
+        logging.info("Обработка оригинального изображения завершена")
 
-        self._log("Обработка ЧБ изображения")
+        logging.info("Обработка ЧБ изображения")
         image_grayscale = artwork_original.grayscale(method='manual')
         image_grayscale_3c = cv2.cvtColor(image_grayscale, cv2.COLOR_GRAY2BGR)
         artwork_grayscale = Artwork(image_grayscale_3c, artwork_original.metadata.copy())
         self.process_artwork(artwork_grayscale, prefix='gray')
-        self._log("Обработка ЧБ изображения завершена")
+        logging.info("Обработка ЧБ изображения завершена")
 
-        self._log("Создание sobel-версии artwork")
+        logging.info("Создание sobel-версии artwork")
         image_sobel = artwork_grayscale.sobel(method='manual')
         artwork_sobel = Artwork(image_sobel, artwork_original.metadata.copy())
-        self._log("Создание sobel-версии artwork завершено")
+        logging.info("Создание sobel-версии artwork завершено")
 
-        self._log("Сложение оригинального и sobel artwork")
+        logging.info("Сложение оригинального и sobel artwork")
         artwork_sum = artwork_original + artwork_sobel
         sum_path = os.path.join(self._output_dir, 'image_original_plus_sobel.jpg')
         cv2.imwrite(sum_path, artwork_sum.image)
-        self._log(f"Результат сложения сохранен в {sum_path}")
+        logging.info(f"Результат сложения сохранен в {sum_path}")
 
-        self._log("Пайплайн успешно завершен")
+        logging.info("Пайплайн успешно завершен")
 
 
 if __name__ == '__main__':
