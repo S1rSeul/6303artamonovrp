@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import time
+from abc import ABC, abstractmethod
 from typing import Any, Callable
 
 import cv2
@@ -62,7 +63,7 @@ def save_metadata(data: dict, save_path: str) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-class Artwork:
+class Artwork(ABC):
     __slots__ = ('_image', '_metadata')
 
     def __init__(self, image: ImageU8, metadata: dict):
@@ -80,7 +81,7 @@ class Artwork:
     def __str__(self) -> str:
         title = self._metadata.get('title', 'Неизвестен')
         artist = self._metadata.get('artistDisplayName', 'Неизвестен')
-        return f"Artwork: '{title}' by {artist}"
+        return f"{self.__class__.__name__}: '{title}' by {artist}"
 
     def __add__(self, other: 'Artwork') -> 'Artwork':
         if not isinstance(other, Artwork):
@@ -89,19 +90,25 @@ class Artwork:
         if self._metadata != other._metadata:
             raise ValueError("Можно складывать только изображения с одинаковыми метаданными")
 
-        new_image = cv2.add(self._image, other._image)
-        return Artwork(new_image, self._metadata)
+        image1 = self._image
+        image2 = other._image
 
-    def grayscale(self, method: str = 'manual') -> ImageU8:
-        if method == 'manual':
-            weights = np.array((0.114, 0.587, 0.299), dtype=np.float32)
-            return np.clip(self._image @ weights, 0, 255).astype(np.uint8)
-        elif method == 'opencv':
-            return cv2.cvtColor(self._image, cv2.COLOR_BGR2GRAY)
+        if image1.ndim != image2.ndim:
+            if image1.ndim == 3 and image2.ndim == 2:
+                image2 = cv2.cvtColor(image2, cv2.COLOR_GRAY2BGR).astype(np.uint8)
+            elif image1.ndim == 2 and image2.ndim == 3:
+                image1 = cv2.cvtColor(image1, cv2.COLOR_GRAY2BGR).astype(np.uint8)
+            else:
+                raise ValueError("Несовместимые размерности изображений")
+
+        new_image = cv2.add(image1, image2)
+        if isinstance(self, ColorArtwork) or isinstance(other, ColorArtwork):
+            result_class = ColorArtwork
         else:
-            raise ValueError("method должен быть 'manual' или 'opencv'")
+            result_class = GrayscaleArtwork
+        return result_class(new_image, self._metadata.copy())
 
-    def convolve(self, kernel: ImageF32, astype: str = 'int', method: str = 'manual') -> ImageU8 | ImageF32:
+    def _convolve_array(self, kernel: ImageF32, astype: str = 'int', method: str = 'manual') -> ImageU8 | ImageF32:
         if method == 'manual':
             k_h, k_w = kernel.shape
             pad_h, pad_w = k_h // 2, k_w // 2
@@ -124,7 +131,11 @@ class Artwork:
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    def gaussian(self, ksize: int, sigma: float, method: str = 'manual') -> ImageU8:
+    def convolve(self, kernel: ImageF32, astype: str = 'int', method: str = 'manual') -> 'Artwork':
+        result = self._convolve_array(kernel, astype, method)
+        return self.__class__(result, self._metadata.copy())
+
+    def gaussian(self, ksize: int, sigma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             k = ksize // 2
             x, y = np.mgrid[-k:k + 1, -k:k + 1]
@@ -132,11 +143,12 @@ class Artwork:
             kernel /= kernel.sum()
             return self.convolve(kernel)
         elif method == 'opencv':
-            return cv2.GaussianBlur(self._image, (ksize, ksize), sigma)
+            blurred = cv2.GaussianBlur(self._image, (ksize, ksize), sigma)
+            return self.__class__(blurred, self._metadata.copy())
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    def sobel(self, method: str = 'manual') -> ImageU8:
+    def sobel(self, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             sobel_x = np.array([
                 [-1, 0, 1],
@@ -150,67 +162,107 @@ class Artwork:
                 [1, 2, 1],
             ], dtype=np.float32)
 
-            gx = self.convolve(sobel_x, 'float')
-            gy = self.convolve(sobel_y, 'float')
+            gx = self._convolve_array(sobel_x, 'float')
+            gy = self._convolve_array(sobel_y, 'float')
 
-            magnitude = np.sqrt(gx ** 2 + gy ** 2)
-
-            return magnitude.astype(np.uint8)
+            magnitude = np.sqrt(gx ** 2 + gy ** 2).astype(np.uint8)
+            return self.__class__(magnitude, self.metadata.copy())
         elif method == 'opencv':
             gx = cv2.Sobel(self._image, ddepth=cv2.CV_32F, dx=1, dy=0)
             gy = cv2.Sobel(self._image, ddepth=cv2.CV_32F, dx=0, dy=1)
 
-            magnitude = cv2.magnitude(gx, gy)
-
-            return magnitude.astype(np.uint8)
+            magnitude = cv2.magnitude(gx, gy).astype(np.uint8)
+            return self.__class__(magnitude, self.metadata.copy())
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    def gamma_correction(self, gamma: float, method: str = 'manual') -> ImageU8:
+    def gamma_correction(self, gamma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             image = self._image.astype(np.float32) / 255.0
             corrected = np.power(image, 1 / gamma)
-            return (corrected * 255).astype(np.uint8)
+            result = (corrected * 255).astype(np.uint8)
         elif method == 'opencv':
             image = self._image.astype(np.float32) / 255.0
             corrected = cv2.pow(image, 1 / gamma)
-            return (corrected * 255).astype(np.uint8)
+            result = (corrected * 255).astype(np.uint8)
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
+        return self.__class__(result, self.metadata.copy())
+
+    @abstractmethod
+    def grayscale(self, method: str = 'manual') -> 'Artwork':
+        pass
+
+    @abstractmethod
+    def equalize_hist(self, method: str = 'manual') -> 'Artwork':
+        pass
+
+
+class ColorArtwork(Artwork):
+    __slots__ = ()
+
+    def __init__(self, image: ImageU8, metadata: dict):
+        if image.ndim != 3:
+            raise ValueError("ColorArtwork ожидает 3-канальное изображение")
+        super().__init__(image, metadata)
+
+    def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
+        if method == 'manual':
+            weights = np.array((0.114, 0.587, 0.299), dtype=np.float32)
+            gray = np.clip(self._image @ weights, 0, 255).astype(np.uint8)
+        elif method == 'opencv':
+            gray = cv2.cvtColor(self._image, cv2.COLOR_BGR2GRAY)
+        else:
+            raise ValueError("method должен быть 'manual' или 'opencv'")
+        return GrayscaleArtwork(gray, self._metadata.copy())
+
+    def equalize_hist(self, method: str = 'manual') -> 'ColorArtwork':
+        if method == 'manual':
+            lab = cv2.cvtColor(self._image, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            l_eq = self._equalize_hist_impl(l)
+        elif method == 'opencv':
+            lab = cv2.cvtColor(self._image, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            l_eq = cv2.equalizeHist(l)
+        else:
+            raise ValueError("method должен быть 'manual' или 'opencv'")
+        lab_eq = cv2.merge([l_eq, a, b])
+        result = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+        return ColorArtwork(result, self._metadata.copy())
 
     @staticmethod
-    def _equalize_hist_impl(image: ImageU8, method: str = 'manual') -> ImageU8:
+    def _equalize_hist_impl(image: ImageU8) -> ImageU8:
+        hist = np.histogram(image.flatten(), 256, (0, 256))[0]
+        cdf = hist.cumsum()
+        cdf_norm = cdf * 255 / cdf[-1]
+        lut = np.round(cdf_norm).astype(np.uint8)
+        return lut[image]
+
+
+class GrayscaleArtwork(Artwork):
+    __slots__ = ()
+
+    def __init__(self, image: ImageU8, metadata: dict):
+        if image.ndim != 2:
+            raise ValueError("GrayscaleArtwork ожидает 2-мерное изображение")
+        super().__init__(image, metadata)
+
+    def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
+        return GrayscaleArtwork(self._image.copy(), self._metadata.copy())
+
+    def equalize_hist(self, method: str = 'manual') -> 'GrayscaleArtwork':
         if method == 'manual':
-            hist = np.histogram(image.flatten(), 256, (0, 256))[0]
+            hist = np.histogram(self._image.flatten(), 256, (0, 256))[0]
             cdf = hist.cumsum()
             cdf_norm = cdf * 255 / cdf[-1]
             lut = np.round(cdf_norm).astype(np.uint8)
-            return lut[image]
+            result = lut[self._image]
         elif method == 'opencv':
-            return cv2.equalizeHist(image)
+            result = cv2.equalizeHist(self._image)
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
-
-    def equalize_hist(self, method: str = 'manual') -> ImageU8:
-        if self._image.ndim == 2:
-            return self._equalize_hist_impl(self._image, method)
-        elif self._image.ndim == 3:
-            if method == 'manual':
-                lab = cv2.cvtColor(self._image, cv2.COLOR_BGR2LAB)
-                l, a, b = cv2.split(lab)
-                l_eq = self._equalize_hist_impl(l)
-            elif method == 'opencv':
-                lab = cv2.cvtColor(self._image, cv2.COLOR_BGR2LAB)
-                l, a, b = cv2.split(lab)
-                l_eq = cv2.equalizeHist(l)
-            else:
-                raise ValueError("method должен быть 'manual' или 'opencv'")
-
-            lab_eq = cv2.merge([l_eq, a, b])
-            return cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
-
-        else:
-            raise ValueError(f"Не поддерживаемая размерность: {self._image.ndim}. Ожидается 2 (ЧБ) или 3 (цветное).")
+        return GrayscaleArtwork(result, self._metadata.copy())
 
 
 class ImageProcessor:
@@ -243,7 +295,13 @@ class ImageProcessor:
         save_metadata(metadata, json_path)
         logging.info(f"Метаданные сохранены в {json_path}")
 
-        artwork = Artwork(image, metadata)
+        if image.ndim == 3:
+            artwork = ColorArtwork(image, metadata)
+        elif image.ndim == 2:
+            artwork = GrayscaleArtwork(image, metadata)
+        else:
+            raise ValueError(f"Неподдерживаемая размерность изображения: {image.shape}")
+
         logging.info(f"Создан объект: {artwork}")
         return artwork
 
@@ -270,7 +328,7 @@ class ImageProcessor:
             end = time.perf_counter()
             logging.info(f"[TIME] {description}: {end - start:.6f} секунд")
             out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
-            cv2.imwrite(out_path, result)
+            cv2.imwrite(out_path, result.image)
 
         operations = [
             (artwork.grayscale, 'grayscale_manual', "Ручной grayscale", {'method': 'manual'}),
@@ -295,21 +353,21 @@ class ImageProcessor:
     def run_pipeline(self) -> None:
         logging.info("Запуск пайплайна обработки изображений")
 
-        logging.info("Обработка оригинального изображения")
+        logging.info("Получение случайной картины")
         artwork_original = self.download_random_painting()
+        logging.info("Получение случайной картины завершено")
+
+        logging.info("Обработка оригинального изображения")
         self.process_artwork(artwork_original, prefix='color')
         logging.info("Обработка оригинального изображения завершена")
 
         logging.info("Обработка ЧБ изображения")
-        image_grayscale = artwork_original.grayscale(method='manual')
-        image_grayscale_3c = cv2.cvtColor(image_grayscale, cv2.COLOR_GRAY2BGR)
-        artwork_grayscale = Artwork(image_grayscale_3c, artwork_original.metadata.copy())
+        artwork_grayscale = artwork_original.grayscale()
         self.process_artwork(artwork_grayscale, prefix='gray')
         logging.info("Обработка ЧБ изображения завершена")
 
         logging.info("Создание sobel-версии artwork")
-        image_sobel = artwork_grayscale.sobel(method='manual')
-        artwork_sobel = Artwork(image_sobel, artwork_original.metadata.copy())
+        artwork_sobel = artwork_grayscale.sobel()
         logging.info("Создание sobel-версии artwork завершено")
 
         logging.info("Сложение оригинального и sobel artwork")
@@ -317,6 +375,13 @@ class ImageProcessor:
         sum_path = os.path.join(self._output_dir, 'image_original_plus_sobel.jpg')
         cv2.imwrite(sum_path, artwork_sum.image)
         logging.info(f"Результат сложения сохранен в {sum_path}")
+
+        logging.info("Демонстрация полиморфизма: выравнивание гистограммы для разных типов")
+        for a in [artwork_original, artwork_grayscale]:
+            eq = a.equalize_hist(method='opencv')
+            out_path = os.path.join(self._output_dir, f'image_eq_{a.__class__.__name__}.jpg')
+            cv2.imwrite(out_path, eq.image)
+            logging.info(f"Сохранён результат для {a.__class__.__name__} в {out_path}")
 
         logging.info("Пайплайн успешно завершен")
 
