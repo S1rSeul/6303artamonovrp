@@ -264,79 +264,31 @@ class ImageProcessor:
         sigma = 1.0
         gamma = 0.5
 
-        def time_and_save(func: Callable, suffix: str, description: str, **kwargs) -> None:
+        def time_and_save(function: Callable, suffix: str, description: str, **kwargs: Any) -> None:
             start = time.perf_counter()
-            result = func(**kwargs)
+            result = function(**kwargs)
             end = time.perf_counter()
             logging.info(f"[TIME] {description}: {end - start:.6f} секунд")
             out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
             cv2.imwrite(out_path, result)
 
-        time_and_save(
-            lambda: artwork.grayscale(method='manual'),
-            'grayscale_manual',
-            "Ручной grayscale",
-        )
-        time_and_save(
-            lambda: artwork.grayscale(method='opencv'),
-            'grayscale_opencv',
-            "OpenCV grayscale",
-        )
+        operations = [
+            (artwork.grayscale, 'grayscale_manual', "Ручной grayscale", {'method': 'manual'}),
+            (artwork.grayscale, 'grayscale_opencv', "OpenCV grayscale", {'method': 'opencv'}),
+            (artwork.convolve, 'convolve_manual', "Ручной convolve", {'kernel': sharpen_kernel, 'method': 'manual'}),
+            (artwork.convolve, 'convolve_opencv', "OpenCV convolve", {'kernel': sharpen_kernel, 'method': 'opencv'}),
+            (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', "Ручной gaussian", {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
+            (artwork.gaussian, f'gaussian_opencv_ks{ksize}_s{sigma}', "OpenCV gaussian", {'ksize': ksize, 'sigma': sigma, 'method': 'opencv'}),
+            (artwork.sobel, 'sobel_mag_manual', "Ручной sobel", {'method': 'manual'}),
+            (artwork.sobel, 'sobel_mag_opencv', "OpenCV sobel", {'method': 'opencv'}),
+            (artwork.gamma_correction, f'gamma_manual_g{gamma}', "Ручная гамма-коррекция", {'gamma': gamma, 'method': 'manual'}),
+            (artwork.gamma_correction, f'gamma_opencv_g{gamma}', "OpenCV гамма-коррекция", {'gamma': gamma, 'method': 'opencv'}),
+            (artwork.equalize_hist, 'eq_hist_manual', "Ручное выравнивание гистограммы", {'method': 'manual'}),
+            (artwork.equalize_hist, 'eq_hist_opencv', "OpenCV выравнивание гистограммы", {'method': 'opencv'}),
+        ]
 
-        time_and_save(
-            lambda: artwork.convolve(kernel=sharpen_kernel, method='manual'),
-            'convolve_manual',
-            "Ручной convolve",
-        )
-        time_and_save(
-            lambda: artwork.convolve(kernel=sharpen_kernel, method='opencv'),
-            'convolve_opencv',
-            "OpenCV convolve",
-        )
-
-        time_and_save(
-            lambda: artwork.gaussian(ksize=ksize, sigma=sigma, method='manual'),
-            f'gaussian_manual_ks{ksize}_s{sigma}',
-            "Ручной gaussian",
-        )
-        time_and_save(
-            lambda: artwork.gaussian(ksize=ksize, sigma=sigma, method='opencv'),
-            f'gaussian_opencv_ks{ksize}_s{sigma}',
-            "OpenCV gaussian",
-        )
-
-        time_and_save(
-            lambda: artwork.sobel(method='manual'),
-            'sobel_mag_manual',
-            "Ручной sobel",
-        )
-        time_and_save(
-            lambda: artwork.sobel(method='opencv'),
-            'sobel_mag_opencv',
-            "OpenCV sobel",
-        )
-
-        time_and_save(
-            lambda: artwork.gamma_correction(gamma=gamma, method='manual'),
-            f'gamma_manual_g{gamma}',
-            "Ручная гамма-коррекция",
-        )
-        time_and_save(
-            lambda: artwork.gamma_correction(gamma=gamma, method='opencv'),
-            f'gamma_opencv_g{gamma}',
-            "OpenCV гамма-коррекция",
-        )
-
-        time_and_save(
-            lambda: artwork.equalize_hist(method='manual'),
-            'eq_hist_manual',
-            "Ручное выравнивание гистограммы",
-        )
-        time_and_save(
-            lambda: artwork.equalize_hist(method='opencv'),
-            'eq_hist_opencv',
-            "OpenCV выравнивание гистограммы",
-        )
+        for func, suff, desc, kwargs in operations:
+            time_and_save(func, suff, desc, **kwargs)
 
         logging.info(f"Обработка с префиксом '{prefix}' завершена.")
 
