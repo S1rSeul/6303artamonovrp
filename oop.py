@@ -3,18 +3,59 @@ import json
 import os
 import random
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import cv2
 
-
 import numpy as np
-import requests
 from numpy.typing import NDArray
+
+import requests
 
 
 ImageU8 = NDArray[np.uint8]
 ImageF32 = NDArray[np.float32]
+
+
+def timeit(func: Callable) -> Callable:
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        end = time.perf_counter()
+        print(f"[TIME] {func.__name__} выполнена за {end - start:.6f} секунд")
+        return result
+    return wrapper
+
+
+def get_painting_id(csv_path: str) -> str:
+    paintings = []
+    with open(csv_path, mode='r', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            if (row.get('Classification') == 'Paintings'
+                    and row.get('Is Public Domain') == 'True'):
+                paintings.append(row.get("Object ID"))
+
+    return random.choice(paintings)
+
+
+def fetch_object_metadata(object_id: str) -> dict:
+    url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def download_image(image_url: str, save_path: str) -> None:
+    response = requests.get(image_url)
+    response.raise_for_status()
+
+    with open(save_path, 'wb') as f:
+        f.write(response.content)
+
+
+def save_metadata(data: dict, save_path: str) -> None:
+    with open(save_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 class Artwork:
@@ -40,9 +81,12 @@ class Artwork:
     def __add__(self, other: 'Artwork') -> 'Artwork':
         if not isinstance(other, Artwork):
             raise TypeError("Можно складывать только объекты Artwork")
+
         if self._metadata != other._metadata:
             raise ValueError("Можно складывать только изображения с одинаковыми метаданными")
-        return Artwork(self._image + other._image, self._metadata)
+
+        new_image = cv2.add(self._image, other._image)
+        return Artwork(new_image, self._metadata)
 
     def grayscale(self, method: str = 'manual') -> ImageU8:
         if method == 'manual':
@@ -163,3 +207,168 @@ class Artwork:
 
         else:
             raise ValueError(f"Не поддерживаемая размерность: {self._image.ndim}. Ожидается 2 (ЧБ) или 3 (цветное).")
+
+
+class ImageProcessor:
+    __slots__ = ('_csv_path', '_output_dir')
+
+    def __init__(self, csv_path: str = 'MetObjects.csv', output_dir: str = 'paintings'):
+        self._csv_path = csv_path
+        self._output_dir = output_dir
+        os.makedirs(self._output_dir, exist_ok=True)
+
+    @staticmethod
+    def _log(message: str) -> None:
+        print(f"[IMAGE PROCESSOR] {message}")
+
+    @timeit
+    def download_random_painting(self) -> Artwork:
+        object_id = get_painting_id(self._csv_path)
+        self._log(f"Выбрана картина ID {object_id}")
+        self._log(f"Загрузка метаданных для объекта {object_id}")
+        metadata = fetch_object_metadata(object_id)
+
+        primary_image = metadata.get('primaryImage')
+        if not primary_image:
+            raise ValueError(f"У объекта {object_id} отсутствует primaryImage")
+
+        img_path = os.path.join(self._output_dir, 'image.jpg')
+        self._log(f"Скачивание изображения: {primary_image}")
+        download_image(primary_image, img_path)
+        self._log(f"Изображение сохранено в {img_path}")
+
+        image = cv2.imread(img_path)
+
+        json_path = os.path.join(self._output_dir, 'image.json')
+        save_metadata(metadata, json_path)
+        self._log(f"Метаданные сохранены в {json_path}")
+
+        artwork = Artwork(image, metadata)
+        self._log(f"Создан объект: {artwork}")
+        return artwork
+
+    @timeit
+    def process_artwork(self, artwork: Artwork, prefix: str = '') -> None:
+        self._log(f"Начало обработки изображения с префиксом '{prefix}'...")
+
+        orig_path = os.path.join(self._output_dir, f'image_{prefix}_original.jpg')
+        cv2.imwrite(orig_path, artwork.image)
+        self._log(f"Оригинал изображения сохранен в {orig_path}")
+
+        sharpen_kernel = np.array([
+            [0, -1, 0],
+            [-1, 5, -1],
+            [0, -1, 0],
+        ], dtype=np.float32)
+        ksize = 3
+        sigma = 1.0
+        gamma = 0.5
+
+        def time_and_save(func: Callable, suffix: str, description: str, **kwargs) -> None:
+            start = time.perf_counter()
+            result = func(**kwargs)
+            end = time.perf_counter()
+            print(f"[TIME] {description}: {end - start:.6f} секунд")
+            out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
+            cv2.imwrite(out_path, result)
+
+        time_and_save(
+            lambda: artwork.grayscale(method='manual'),
+            'grayscale_manual',
+            "Ручной grayscale",
+        )
+        time_and_save(
+            lambda: artwork.grayscale(method='opencv'),
+            'grayscale_opencv',
+            "OpenCV grayscale",
+        )
+
+        time_and_save(
+            lambda: artwork.convolve(kernel=sharpen_kernel, method='manual'),
+            'convolve_manual',
+            "Ручной convolve",
+        )
+        time_and_save(
+            lambda: artwork.convolve(kernel=sharpen_kernel, method='opencv'),
+            'convolve_opencv',
+            "OpenCV convolve",
+        )
+
+        time_and_save(
+            lambda: artwork.gaussian(ksize=ksize, sigma=sigma, method='manual'),
+            f'gaussian_manual_ks{ksize}_s{sigma}',
+            "Ручной gaussian",
+        )
+        time_and_save(
+            lambda: artwork.gaussian(ksize=ksize, sigma=sigma, method='opencv'),
+            f'gaussian_opencv_ks{ksize}_s{sigma}',
+            "OpenCV gaussian",
+        )
+
+        time_and_save(
+            lambda: artwork.sobel(method='manual'),
+            'sobel_mag_manual',
+            "Ручной sobel",
+        )
+        time_and_save(
+            lambda: artwork.sobel(method='opencv'),
+            'sobel_mag_opencv',
+            "OpenCV sobel",
+        )
+
+        time_and_save(
+            lambda: artwork.gamma_correction(gamma=gamma, method='manual'),
+            f'gamma_manual_g{gamma}',
+            "Ручная гамма-коррекция",
+        )
+        time_and_save(
+            lambda: artwork.gamma_correction(gamma=gamma, method='opencv'),
+            f'gamma_opencv_g{gamma}',
+            "OpenCV гамма-коррекция",
+        )
+
+        time_and_save(
+            lambda: artwork.equalize_hist(method='manual'),
+            'eq_hist_manual',
+            "Ручное выравнивание гистограммы",
+        )
+        time_and_save(
+            lambda: artwork.equalize_hist(method='opencv'),
+            'eq_hist_opencv',
+            "OpenCV выравнивание гистограммы",
+        )
+
+        self._log(f"Обработка с префиксом '{prefix}' завершена.")
+
+    def run_pipeline(self) -> None:
+        self._log("Запуск пайплайна обработки изображений")
+
+        self._log("Обработка оригинального изображения")
+        artwork_original = self.download_random_painting()
+        self.process_artwork(artwork_original, prefix='color')
+        self._log("Обработка оригинального изображения завершена")
+
+        self._log("Обработка ЧБ изображения")
+        image_grayscale = artwork_original.grayscale(method='manual')
+        image_grayscale_3c = cv2.cvtColor(image_grayscale, cv2.COLOR_GRAY2BGR)
+        artwork_grayscale = Artwork(image_grayscale_3c, artwork_original.metadata.copy())
+        self.process_artwork(artwork_grayscale, prefix='gray')
+        self._log("Обработка ЧБ изображения завершена")
+
+        self._log("Создание sobel-версии artwork")
+        image_sobel = artwork_grayscale.sobel(method='manual')
+        artwork_sobel = Artwork(image_sobel, artwork_original.metadata.copy())
+        self._log("Создание sobel-версии artwork завершено")
+
+        self._log("Сложение оригинального и sobel artwork")
+        artwork_sum = artwork_original + artwork_sobel
+        sum_path = os.path.join(self._output_dir, 'image_original_plus_sobel.jpg')
+        cv2.imwrite(sum_path, artwork_sum.image)
+        self._log(f"Результат сложения сохранен в {sum_path}")
+
+        self._log("Пайплайн успешно завершен")
+
+
+if __name__ == '__main__':
+    processor = ImageProcessor()
+    processor.run_pipeline()
