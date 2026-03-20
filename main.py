@@ -66,6 +66,10 @@ def save_metadata(data: dict, save_path: str) -> None:
 class Artwork(ABC):
     __slots__ = ('_image', '_metadata')
 
+    @property
+    def image(self) -> ImageU8:
+        return self._image.copy()
+
     def __init__(self, image: ImageU8, metadata: dict):
         self._image = image
         self._metadata = metadata
@@ -158,13 +162,13 @@ class Artwork(ABC):
             gy = self._convolve_array(sobel_y, 'float')
 
             magnitude = np.sqrt(gx ** 2 + gy ** 2).astype(np.uint8)
-            return self.__class__(magnitude, self.metadata.copy())
+            return self.__class__(magnitude, self._metadata.copy())
         elif method == 'opencv':
             gx = cv2.Sobel(self._image, ddepth=cv2.CV_32F, dx=1, dy=0)
             gy = cv2.Sobel(self._image, ddepth=cv2.CV_32F, dx=0, dy=1)
 
             magnitude = cv2.magnitude(gx, gy).astype(np.uint8)
-            return self.__class__(magnitude, self.metadata.copy())
+            return self.__class__(magnitude, self._metadata.copy())
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
@@ -179,7 +183,7 @@ class Artwork(ABC):
             result = (corrected * 255).astype(np.uint8)
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
-        return self.__class__(result, self.metadata.copy())
+        return self.__class__(result, self._metadata.copy())
 
     @abstractmethod
     def grayscale(self, method: str = 'manual') -> 'Artwork':
