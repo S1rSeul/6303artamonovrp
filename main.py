@@ -70,14 +70,6 @@ class Artwork(ABC):
         self._image = image
         self._metadata = metadata
 
-    @property
-    def image(self) -> ImageU8:
-        return self._image
-
-    @property
-    def metadata(self) -> dict:
-        return self._metadata
-
     def __str__(self) -> str:
         title = self._metadata.get('title', 'Неизвестен')
         artist = self._metadata.get('artistDisplayName', 'Неизвестен')
