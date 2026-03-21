@@ -83,6 +83,7 @@ class Artwork(ABC):
         artist = self.metadata.get('artistDisplayName', 'Неизвестен')
         return f"{self.__class__.__name__}: '{title}' by {artist}"
 
+    @timeit
     def __add__(self, other: 'Artwork') -> 'Artwork':
         if not isinstance(other, Artwork):
             raise TypeError("Можно складывать только объекты Artwork")
@@ -131,23 +132,27 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
+    @timeit
     def convolve(self, kernel: ImageF32, astype: str = 'int', method: str = 'manual') -> 'Artwork':
         result = self._convolve_array(kernel, astype, method)
         return self.__class__(result, self.metadata)
 
+    @timeit
     def gaussian(self, ksize: int, sigma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             k = ksize // 2
             x, y = np.mgrid[-k:k + 1, -k:k + 1]
             kernel = np.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
             kernel /= kernel.sum()
-            return self.convolve(kernel)
+            blurred = self._convolve_array(kernel)
+            return self.__class__(blurred, self.metadata)
         elif method == 'opencv':
             blurred = cv2.GaussianBlur(self.image, (ksize, ksize), sigma)
             return self.__class__(blurred, self.metadata)
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
+    @timeit
     def sobel(self, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             sobel_x = np.array([
@@ -176,6 +181,7 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
+    @timeit
     def gamma_correction(self, gamma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             image = self.image.astype(np.float32) / 255.0
@@ -206,6 +212,7 @@ class ColorArtwork(Artwork):
             raise ValueError("ColorArtwork ожидает 3-канальное изображение")
         super().__init__(image, metadata)
 
+    @timeit
     def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
         if method == 'manual':
             weights = np.array((0.114, 0.587, 0.299), dtype=np.float32)
@@ -216,6 +223,7 @@ class ColorArtwork(Artwork):
             raise ValueError("method должен быть 'manual' или 'opencv'")
         return GrayscaleArtwork(gray, self.metadata)
 
+    @timeit
     def equalize_hist(self, method: str = 'manual') -> 'ColorArtwork':
         if method == 'manual':
             lab = cv2.cvtColor(self.image, cv2.COLOR_BGR2LAB)
@@ -248,9 +256,11 @@ class GrayscaleArtwork(Artwork):
             raise ValueError("GrayscaleArtwork ожидает 2-мерное изображение")
         super().__init__(image, metadata)
 
+    @timeit
     def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
         return GrayscaleArtwork(self.image, self.metadata)
 
+    @timeit
     def equalize_hist(self, method: str = 'manual') -> 'GrayscaleArtwork':
         if method == 'manual':
             hist = np.histogram(self.image.flatten(), 256, (0, 256))[0]
@@ -322,34 +332,41 @@ class ImageProcessor:
         sigma = 1.0
         gamma = 0.5
 
-        def time_and_save(function: Callable, suffix: str, description: str, **kwargs: Any) -> None:
-            start = time.perf_counter()
-            result = function(**kwargs)
-            end = time.perf_counter()
-            logging.info(f"[TIME] {description}: {end - start:.6f} секунд")
-            out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
-            cv2.imwrite(out_path, result.image)
-
-        operations = [
-            (artwork.grayscale, 'grayscale_manual', "Ручной grayscale", {'method': 'manual'}),
-            (artwork.grayscale, 'grayscale_opencv', "OpenCV grayscale", {'method': 'opencv'}),
-            (artwork.convolve, 'convolve_manual', "Ручной convolve", {'kernel': sharpen_kernel, 'method': 'manual'}),
-            (artwork.convolve, 'convolve_opencv', "OpenCV convolve", {'kernel': sharpen_kernel, 'method': 'opencv'}),
-            (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', "Ручной gaussian", {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
-            (artwork.gaussian, f'gaussian_opencv_ks{ksize}_s{sigma}', "OpenCV gaussian", {'ksize': ksize, 'sigma': sigma, 'method': 'opencv'}),
-            (artwork.sobel, 'sobel_mag_manual', "Ручной sobel", {'method': 'manual'}),
-            (artwork.sobel, 'sobel_mag_opencv', "OpenCV sobel", {'method': 'opencv'}),
-            (artwork.gamma_correction, f'gamma_manual_g{gamma}', "Ручная гамма-коррекция", {'gamma': gamma, 'method': 'manual'}),
-            (artwork.gamma_correction, f'gamma_opencv_g{gamma}', "OpenCV гамма-коррекция", {'gamma': gamma, 'method': 'opencv'}),
-            (artwork.equalize_hist, 'eq_hist_manual', "Ручное выравнивание гистограммы", {'method': 'manual'}),
-            (artwork.equalize_hist, 'eq_hist_opencv', "OpenCV выравнивание гистограммы", {'method': 'opencv'}),
+        operations_manual = [
+            (artwork.grayscale, 'grayscale_manual', {'method': 'manual'}),
+            (artwork.convolve, 'convolve_manual', {'kernel': sharpen_kernel, 'method': 'manual'}),
+            (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
+            (artwork.sobel, 'sobel_mag_manual', {'method': 'manual'}),
+            (artwork.gamma_correction, f'gamma_manual_g{gamma}', {'gamma': gamma, 'method': 'manual'}),
+            (artwork.equalize_hist, 'eq_hist_manual', {'method': 'manual'}),
         ]
 
-        for func, suff, desc, kwargs in operations:
-            time_and_save(func, suff, desc, **kwargs)
+        operations_opencv = [
+            (artwork.grayscale, 'grayscale_opencv', {'method': 'opencv'}),
+            (artwork.convolve, 'convolve_opencv', {'kernel': sharpen_kernel, 'method': 'opencv'}),
+            (artwork.gaussian, f'gaussian_opencv_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'opencv'}),
+            (artwork.sobel, 'sobel_mag_opencv', {'method': 'opencv'}),
+            (artwork.gamma_correction, f'gamma_opencv_g{gamma}', {'gamma': gamma, 'method': 'opencv'}),
+            (artwork.equalize_hist, 'eq_hist_opencv', {'method': 'opencv'}),
+        ]
+
+        logging.info(f"Обработка изображения ручными методами")
+        for function, suffix, kwargs in operations_manual:
+            result = function(**kwargs)
+            out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
+            cv2.imwrite(out_path, result.image)
+        logging.info(f"Обработка изображения ручными методами завершена")
+
+        logging.info(f"Обработка изображения opencv методами")
+        for function, suffix, kwargs in operations_opencv:
+            result = function(**kwargs)
+            out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
+            cv2.imwrite(out_path, result.image)
+        logging.info(f"Обработка изображения opencv методами завершена")
 
         logging.info(f"Обработка с префиксом '{prefix}' завершена.")
 
+    @timeit
     def run_pipeline(self) -> None:
         logging.info("Запуск пайплайна обработки изображений")
 
