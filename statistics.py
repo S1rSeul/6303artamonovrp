@@ -5,8 +5,8 @@ from typing import Iterator, Tuple, Dict, List, Any
 
 
 def compute_age(row: pd.Series) -> float:
-    accession_year = float(row['accessionYear'])
-    obj_begin_date = float(row['objectBeginDate'])
+    accession_year = pd.to_numeric(row['AccessionYear'], errors='coerce')
+    obj_begin_date = pd.to_numeric(row['Object Begin Date'], errors='coerce')
     if pd.isna(accession_year) or pd.isna(obj_begin_date):
         return np.nan
 
@@ -14,11 +14,11 @@ def compute_age(row: pd.Series) -> float:
     if age < 0:
         return np.nan
 
-    return age
+    return float(age)
 
 
 def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
-    reader = pd.read_csv(filepath, chunksize=chunksize)
+    reader = pd.read_csv(filepath, chunksize=chunksize, low_memory=False)
     for chunk in reader:
         yield chunk
 
@@ -27,7 +27,9 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
     for chunk in chunk_iter:
         df = chunk.copy()
         df['age'] = df.apply(compute_age, axis=1)
-        df.dropna(subset=['culture', 'age'], inplace=True)
+        df['AccessionYear'] = pd.to_numeric(df['AccessionYear'], errors='coerce')
+        df['Object Begin Date'] = pd.to_numeric(df['Object Begin Date'], errors='coerce')
+        df.dropna(subset=['Culture', 'age'], inplace=True)
         if not df.empty:
             yield df
 
@@ -37,7 +39,7 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
     year_stats = {}
 
     for df in processed_iter:
-        for culture, group in df.groupby('culture'):
+        for culture, group in df.groupby('Culture'):
             if culture not in stats_aggregate:
                 stats_aggregate[culture] = {
                     'count': 0,
@@ -50,14 +52,14 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
             cur = stats_aggregate[culture]
             cur['count'] += len(group)
             cur['sum_age'] += group['age'].sum()
-            cur['sum_age_sq'] += (group['age'] ** 2).sum()
-            cur['min_accession'] = min(cur['min_accession'], group['accessionYear'].min())
-            cur['max_accession'] = max(cur['max_accession'], group['accessionYear'].max())
+            cur['sum_age_square'] += (group['age'] ** 2).sum()
+            cur['min_accession'] = min(cur['min_accession'], group['AccessionYear'].min())
+            cur['max_accession'] = max(cur['max_accession'], group['AccessionYear'].max())
 
             if culture not in year_stats:
                 year_stats[culture] = {}
 
-            for year, sub in group.groupby('accessionYear'):
+            for year, sub in group.groupby('AccessionYear'):
                 if year not in year_stats[culture]:
                     year_stats[culture][year] = (0.0, 0)
                 s, c = year_stats[culture][year]
@@ -98,4 +100,35 @@ def compute_statistics(stats_agg: dict) -> dict:
     return stats
 
 
+def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_windows: int = 10):
+    chunks = read_chunks(csv_path, chunksize)
+    processed = process_chunk(chunks)
+    stats_aggregate, year_stats = aggregate(processed)
 
+    stats = compute_statistics(stats_aggregate)
+
+    sorted_by_count = sorted(stats.items(), key=lambda x: x[1]['count'], reverse=True)
+    top10 = sorted_by_count[:top_n]
+    print("\nТоп-10 культур по частоте встречаемости:")
+    for i, (cult, data) in enumerate(top10, 1):
+        print(f"{i}. {cult}: {data['count']} объектов, средний возраст = {data['mean']:.1f} лет")
+
+    # Строим столбцовую диаграмму
+
+    culture_longest_entry = max(stats.items(), key=lambda x: x[1]['range_accession'], default=None)
+    if culture_longest_entry is None:
+        print("Нет данных для определения культуры с самой длительной историей.")
+        return
+
+    culture_longest, data_longest = culture_longest_entry
+    range_val = data_longest['range_accession']
+    print(f"\nКультура с самой длительной историей: {culture_longest}")
+    print(f"Размах: {range_val:.0f} лет (от {data_longest['min_accession']:.0f} "
+          f"до {data_longest['max_accession']:.0f})")
+
+    # Строим временной график
+
+
+if __name__ == "__main__":
+    csv = "MetObjects.csv"
+    main(csv)
