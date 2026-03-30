@@ -64,3 +64,38 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
                 year_stats[culture][year] = (s + sub['age'].sum(), c + len(sub))
 
     return stats_aggregate, year_stats
+
+
+def compute_statistics(stats_agg: dict) -> dict:
+    stats = {}
+    for culture, data in stats_agg.items():
+        n = data['count']
+        if n == 0:
+            continue
+
+        sum_age = data['sum_age']
+        sum_age_square = data['sum_age_square']
+        mean = sum_age / n
+        var = (sum_age_square / n) - mean ** 2
+        std = np.sqrt(var)
+        se = std / np.sqrt(n)
+        ci_low = mean - 1.96 * se
+        ci_high = mean + 1.96 * se
+        scatter_low = mean - 1.96 * std
+        scatter_high = mean + 1.96 * std
+        stats[culture] = {
+            'count': n,
+            'mean': mean,
+            'std': std,
+            'ci_low': ci_low,
+            'ci_high': ci_high,
+            'scatter_low': scatter_low,
+            'scatter_high': scatter_high,
+            'min_accession': data['min_accession'],
+            'max_accession': data['max_accession'],
+            'range_accession': data['max_accession'] - data['min_accession'],
+        }
+    return stats
+
+
+
