@@ -115,16 +115,12 @@ def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_window
 
     # Строим столбцовую диаграмму
 
-    culture_longest_entry = max(stats.items(), key=lambda x: x[1]['range_accession'], default=None)
-    if culture_longest_entry is None:
-        print("Нет данных для определения культуры с самой длительной историей.")
-        return
-
-    culture_longest, data_longest = culture_longest_entry
-    range_val = data_longest['range_accession']
-    print(f"\nКультура с самой длительной историей: {culture_longest}")
-    print(f"Размах: {range_val:.0f} лет (от {data_longest['min_accession']:.0f} "
-          f"до {data_longest['max_accession']:.0f})")
+    culture_longest = max(stats.items(), key=lambda x: x[1]['range_accession'])[0]
+    range_val = stats[culture_longest]['range_accession']
+    print(f"\nКультура с самой длительной историей (максимальный размах годов поступления): {culture_longest}")
+    print(
+        f"Размах: {range_val:.0f} лет (от {stats[culture_longest]['min_accession']:.0f} "
+        f"до {stats[culture_longest]['max_accession']:.0f})")
 
     # Строим временной график
 
