@@ -1,10 +1,14 @@
 from collections import defaultdict
+import logging
+import time
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Iterator
 
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
     reader = pd.read_csv(filepath, chunksize=chunksize, low_memory=False)
@@ -13,21 +17,46 @@ def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame
 
 
 def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
+    chunk_count = 0
+    total_rows_processed = 0
+    total_elapsed = 0.0
+
     for chunk in chunk_iter:
+        chunk_count += 1
+        start = time.perf_counter()
+
         chunk['AccessionYear'] = pd.to_numeric(chunk['AccessionYear'], errors='coerce')
         chunk['Object Begin Date'] = pd.to_numeric(chunk['Object Begin Date'], errors='coerce')
         chunk['age'] = chunk['AccessionYear'] - chunk['Object Begin Date']
         chunk.loc[chunk['age'] < 0, 'age'] = np.nan
+        original_len = len(chunk)
         chunk.dropna(subset=['Culture', 'age'], inplace=True)
+        kept = len(chunk)
+
+        elapsed = time.perf_counter() - start
+        total_elapsed += elapsed
+        logging.info(f"Чанк {chunk_count}: обработано {original_len} строк, оставлено {kept}, время {elapsed:.3f} сек")
+
         if not chunk.empty:
+            total_rows_processed += kept
             yield chunk
+
+    logging.info(f"Всего обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
 
 
 def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
+    logging.info("Начало агрегации данных...")
+    total_elapsed = 0.0
+
     stats_aggregate = {}
     year_stats = defaultdict(lambda: defaultdict(lambda: (0.0, 0)))
 
+    chunk_counter = 0
     for df in processed_iter:
+        chunk_counter += 1
+        chunk_start = time.perf_counter()
+
+
         culture_aggregate = df.groupby('Culture').agg(
             count=('age', 'count'),
             sum_age=('age', 'sum'),
@@ -53,10 +82,18 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
             s, c = year_stats[culture][year]
             year_stats[culture][year] = (s + sum_age, c + cnt)
 
+        chunk_elapsed = time.perf_counter() - chunk_start
+        total_elapsed += chunk_elapsed
+        logging.info(f"Агрегация чанка {chunk_counter} заняла {chunk_elapsed:.3f} сек")
+
+    logging.info(f"Агрегация завершена за {total_elapsed:.3f} сек")
     return stats_aggregate, year_stats
 
 
 def compute_statistics(stats_aggregate: dict) -> dict:
+    logging.info("Расчет статистик...")
+    start = time.perf_counter()
+
     stats = {}
     for culture, data in stats_aggregate.items():
         n = data['count']
@@ -86,15 +123,25 @@ def compute_statistics(stats_aggregate: dict) -> dict:
             'max_accession': data['max_accession'],
             'range_accession': data['max_accession'] - data['min_accession'],
         }
+
+    elapsed = time.perf_counter() - start
+    logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats)} культур")
     return stats
 
 
 def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_windows: int = 10):
+    total_start = time.perf_counter()
+    logging.info(f"Начало обработки файла: {csv_path}")
+
+    logging.info("Чтение и обработка чанков...")
     chunks = read_chunks(csv_path, chunksize)
     processed = process_chunk(chunks)
     stats_aggregate, year_stats = aggregate(processed)
 
     stats = compute_statistics(stats_aggregate)
+
+    output_start = time.perf_counter()
+    logging.info("Формирование и вывод результатов...")
 
     sorted_by_count = sorted(stats.items(), key=lambda x: x[1]['count'], reverse=True)
     top10 = sorted_by_count[:top_n]
@@ -112,6 +159,12 @@ def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_window
         f"до {stats[culture_longest]['max_accession']:.0f})")
 
     # Строим временной график
+
+    output_elapsed = time.perf_counter() - output_start
+    total_elapsed = time.perf_counter() - total_start
+
+    logging.info(f"Вывод результатов занял {output_elapsed:.3f} с")
+    logging.info(f"Общее время выполнения: {total_elapsed:.3f} с")
 
 
 if __name__ == "__main__":
