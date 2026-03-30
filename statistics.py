@@ -1,20 +1,9 @@
+from collections import defaultdict
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Iterator, Tuple, Dict, List, Any
-
-
-def compute_age(row: pd.Series) -> float:
-    accession_year = pd.to_numeric(row['AccessionYear'], errors='coerce')
-    obj_begin_date = pd.to_numeric(row['Object Begin Date'], errors='coerce')
-    if pd.isna(accession_year) or pd.isna(obj_begin_date):
-        return np.nan
-
-    age = accession_year - obj_begin_date
-    if age < 0:
-        return np.nan
-
-    return float(age)
+from typing import Iterator
 
 
 def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
@@ -25,52 +14,51 @@ def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame
 
 def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
     for chunk in chunk_iter:
-        df = chunk.copy()
-        df['age'] = df.apply(compute_age, axis=1)
-        df['AccessionYear'] = pd.to_numeric(df['AccessionYear'], errors='coerce')
-        df['Object Begin Date'] = pd.to_numeric(df['Object Begin Date'], errors='coerce')
-        df.dropna(subset=['Culture', 'age'], inplace=True)
-        if not df.empty:
-            yield df
+        chunk['AccessionYear'] = pd.to_numeric(chunk['AccessionYear'], errors='coerce')
+        chunk['Object Begin Date'] = pd.to_numeric(chunk['Object Begin Date'], errors='coerce')
+        chunk['age'] = chunk['AccessionYear'] - chunk['Object Begin Date']
+        chunk.loc[chunk['age'] < 0, 'age'] = np.nan
+        chunk.dropna(subset=['Culture', 'age'], inplace=True)
+        if not chunk.empty:
+            yield chunk
 
 
 def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
     stats_aggregate = {}
-    year_stats = {}
+    year_stats = defaultdict(lambda: defaultdict(lambda: (0.0, 0)))
 
     for df in processed_iter:
-        for culture, group in df.groupby('Culture'):
+        culture_aggregate = df.groupby('Culture').agg(
+            count=('age', 'count'),
+            sum_age=('age', 'sum'),
+            sum_age_square=('age', lambda x: (x ** 2).sum()),
+            min_accession=('AccessionYear', 'min'),
+            max_accession=('AccessionYear', 'max'),
+        ).to_dict(orient='index')
+
+        for culture, vals in culture_aggregate.items():
             if culture not in stats_aggregate:
-                stats_aggregate[culture] = {
-                    'count': 0,
-                    'sum_age': 0.0,
-                    'sum_age_square': 0.0,
-                    'min_accession': np.inf,
-                    'max_accession': -np.inf,
-                }
+                stats_aggregate[culture] = vals
+            else:
+                cur = stats_aggregate[culture]
+                cur['count'] += vals['count']
+                cur['sum_age'] += vals['sum_age']
+                cur['sum_age_square'] += vals['sum_age_square']
+                cur['min_accession'] = min(cur['min_accession'], vals['min_accession'])
+                cur['max_accession'] = max(cur['max_accession'], vals['max_accession'])
 
-            cur = stats_aggregate[culture]
-            cur['count'] += len(group)
-            cur['sum_age'] += group['age'].sum()
-            cur['sum_age_square'] += (group['age'] ** 2).sum()
-            cur['min_accession'] = min(cur['min_accession'], group['AccessionYear'].min())
-            cur['max_accession'] = max(cur['max_accession'], group['AccessionYear'].max())
-
-            if culture not in year_stats:
-                year_stats[culture] = {}
-
-            for year, sub in group.groupby('AccessionYear'):
-                if year not in year_stats[culture]:
-                    year_stats[culture][year] = (0.0, 0)
-                s, c = year_stats[culture][year]
-                year_stats[culture][year] = (s + sub['age'].sum(), c + len(sub))
+        year_aggregate = df.groupby(['Culture', 'AccessionYear'])['age'].agg(['sum', 'count']).reset_index()
+        for _, row in year_aggregate.iterrows():
+            culture, year, sum_age, cnt = row
+            s, c = year_stats[culture][year]
+            year_stats[culture][year] = (s + sum_age, c + cnt)
 
     return stats_aggregate, year_stats
 
 
-def compute_statistics(stats_agg: dict) -> dict:
+def compute_statistics(stats_aggregate: dict) -> dict:
     stats = {}
-    for culture, data in stats_agg.items():
+    for culture, data in stats_aggregate.items():
         n = data['count']
         if n == 0:
             continue
@@ -85,6 +73,7 @@ def compute_statistics(stats_agg: dict) -> dict:
         ci_high = mean + 1.96 * se
         scatter_low = mean - 1.96 * std
         scatter_high = mean + 1.96 * std
+
         stats[culture] = {
             'count': n,
             'mean': mean,
