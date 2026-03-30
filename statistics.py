@@ -55,7 +55,6 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
         chunk_counter += 1
         chunk_start = time.perf_counter()
 
-
         culture_aggregate = df.groupby('Culture').agg(
             count=('age', 'count'),
             sum_age=('age', 'sum'),
@@ -127,6 +126,63 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     return stats
 
 
+def plot_top_n(stats_df: pd.DataFrame, top_n: int = 10):
+    top = stats_df.nlargest(top_n, 'count')
+
+    cultures = top.index.tolist()
+    means = top['mean'].values
+    ci_lows = top['ci_low'].values
+    ci_highs = top['ci_high'].values
+    scatter_lows = top['scatter_low'].values
+    scatter_highs = top['scatter_high'].values
+
+    ci_err_low = [mean - ci_low for mean, ci_low in zip(means, ci_lows)]
+    ci_err_high = [ci_high - mean for mean, ci_high in zip(means, ci_highs)]
+    scatter_err_low = [mean - scatter_low for mean, scatter_low in zip(means, scatter_lows)]
+    scatter_err_high = [scatter_high - mean for mean, scatter_high in zip(means, scatter_highs)]
+
+    x = np.arange(len(cultures))
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(x, means, width=0.6, alpha=0.7, color='steelblue', label='Средний возраст')
+    ax.errorbar(x, means, yerr=[ci_err_low, ci_err_high], fmt='none',
+                ecolor='red', capsize=5, capthick=2, label='95% доверительный интервал')
+    ax.errorbar(x, means, yerr=[scatter_err_low, scatter_err_high], fmt='none',
+                ecolor='gray', capsize=5, capthick=1, alpha=0.6, label='95% интервал рассеяния')
+    ax.set_xticks(x)
+    ax.set_xticklabels(cultures, rotation=45, ha='right')
+    ax.set_ylabel('Средний возраст при поступлении (лет)')
+    ax.set_title(f'Топ-{top_n} культур по частоте встречаемости\n'
+                 'Средний возраст с 95% доверительным интервалом и интервалом рассеяния')
+    ax.legend()
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_time_series(stats: pd.DataFrame, year_df: pd.DataFrame, rolling_window: int = 10):
+    culture_longest = stats['range_accession'].idxmax()
+    row = stats.loc[culture_longest]
+
+    data = year_df[year_df['Culture'] == culture_longest].copy()
+
+    data = data.sort_values('AccessionYear')
+    data['mean_age'] = data['sum_age'] / data['count']
+    data['rolling_mean'] = data['mean_age'].rolling(window=rolling_window, min_periods=1).mean()
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(data['AccessionYear'], data['mean_age'], 'o', markersize=3, alpha=0.5, label='Средний возраст по году')
+    ax.plot(data['AccessionYear'], data['rolling_mean'], color='red', linewidth=2,
+            label=f'Скользящее среднее (окно = {rolling_window})')
+    ax.set_xlabel('Год поступления')
+    ax.set_ylabel('Средний возраст (лет)')
+    ax.set_title(f'Динамика среднего возраста объектов\nКультура: {culture_longest}\n'
+                 f'Период: {row['min_accession']:.0f}–{row['max_accession']:.0f} (размах = {row['range_accession']:.0f} лет)')
+    ax.legend()
+    ax.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
+
 def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_windows: int = 10):
     total_start = time.perf_counter()
     logging.info(f"Начало обработки файла: {csv_path}")
@@ -150,16 +206,11 @@ def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_window
               f"95% доверительный интервал: ({row['ci_low']:.3f}, {row['ci_high']:.3f}), "
               f"95% интервал рассеяния: ({row['scatter_low']:.3f}, {row['scatter_high']:.3f})")
 
-    # Строим столбцовую диаграмму
-
-    if not stats.empty:
-        idx_longest = stats['range_accession'].idxmax()
-        row_longest = stats.loc[idx_longest]
-        print(f"\nКультура с самой длительной историей (максимальный размах годов поступления): {idx_longest}")
-        print(f"Размах: {row_longest['range_accession']:.0f} лет "
-              f"(от {row_longest['min_accession']:.0f} до {row_longest['max_accession']:.0f})\n")
-
-    # Строим временной график
+    idx_longest = stats['range_accession'].idxmax()
+    row_longest = stats.loc[idx_longest]
+    print(f"\nКультура с самой длительной историей (максимальный размах годов поступления): {idx_longest}")
+    print(f"Размах: {row_longest['range_accession']:.0f} лет "
+          f"(от {row_longest['min_accession']:.0f} до {row_longest['max_accession']:.0f})\n")
 
     output_elapsed = time.perf_counter() - output_start
     total_elapsed = time.perf_counter() - total_start
@@ -167,6 +218,8 @@ def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_window
     logging.info(f"Вывод результатов занял {output_elapsed:.3f} с")
     logging.info(f"Общее время выполнения: {total_elapsed:.3f} с")
 
+    plot_top_n(stats, top_n)
+    plot_time_series(stats, year_df, rolling_windows)
 
 if __name__ == "__main__":
     csv = "MetObjects.csv"
