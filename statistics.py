@@ -129,6 +129,8 @@ def compute_statistics(stats_aggregate: dict) -> dict:
     return stats
 
 
+
+
 def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_windows: int = 10):
     total_start = time.perf_counter()
     logging.info(f"Начало обработки файла: {csv_path}")
@@ -147,7 +149,10 @@ def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_window
     top10 = sorted_by_count[:top_n]
     print("\nТоп-10 культур по частоте встречаемости:")
     for i, (cult, data) in enumerate(top10, 1):
-        print(f"{i}. {cult}: {data['count']} объектов, средний возраст = {data['mean']:.1f} лет")
+        print(f"{i}. {cult}: {data['count']} объектов, "
+              f"средний возраст = {data['mean']:.1f} лет, "
+              f"95% доверительный интервал: ({data['ci_low']:.3f}, {data['ci_high']:.3f}), "
+              f"95% интервал рассеяния: ({data['scatter_low']:.3f}, {data['scatter_high']:.3f})")
 
     # Строим столбцовую диаграмму
 
@@ -156,7 +161,7 @@ def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_window
     print(f"\nКультура с самой длительной историей (максимальный размах годов поступления): {culture_longest}")
     print(
         f"Размах: {range_val:.0f} лет (от {stats[culture_longest]['min_accession']:.0f} "
-        f"до {stats[culture_longest]['max_accession']:.0f})")
+        f"до {stats[culture_longest]['max_accession']:.0f})\n")
 
     # Строим временной график
 
