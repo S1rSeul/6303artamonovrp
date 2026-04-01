@@ -130,7 +130,7 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     stats['scatter_high'] = stats['mean'] + 1.96 * stats['std']
     stats['range_accession'] = stats['max_accession'] - stats['min_accession']
 
-    stats = stats.drop(columns=['sum_age', 'sum_age_square', 'var', 'se'])
+    stats = stats.drop(columns=['sum_age', 'sum_age_square', 'var', 'std', 'se'])
 
     elapsed = time.perf_counter() - start
     logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats)} культур")
