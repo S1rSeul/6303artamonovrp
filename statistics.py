@@ -26,6 +26,7 @@ def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame
 
 def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
     chunk_count = 0
+    total_rows = 0
     total_rows_processed = 0
     total_elapsed = 0.0
 
@@ -38,6 +39,7 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
         chunk['age'] = chunk['AccessionYear'] - chunk['Object Begin Date']
         chunk.loc[chunk['age'] < 0, 'age'] = np.nan
         original_len = len(chunk)
+        total_rows += original_len
         chunk.dropna(subset=['Culture', 'age'], inplace=True)
         kept = len(chunk)
 
@@ -49,7 +51,7 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
             total_rows_processed += kept
             yield chunk
 
-    logging.info(f"Всего обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
+    logging.info(f"Всего прочитано строк: {total_rows}, обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
 
 
 def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
