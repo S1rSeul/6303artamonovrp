@@ -108,19 +108,18 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     logging.info("Расчет статистик...")
     start = time.perf_counter()
 
-    stats = stats_df
-    stats['mean'] = stats['sum_age'] / stats['count']
-    stats['var'] = (stats['sum_age_square'] / stats['count']) - stats['mean'] ** 2
-    stats['std'] = np.sqrt(stats['var'])
-    stats['se'] = stats['std'] / np.sqrt(stats['count'])
-    stats['ci_err'] = 1.96 * stats['se']
-    stats['scatter_err'] = 1.96 * stats['std']
+    stats_df['mean'] = stats_df['sum_age'] / stats_df['count']
+    stats_df['var'] = (stats_df['sum_age_square'] / stats_df['count']) - stats_df['mean'] ** 2
+    stats_df['std'] = np.sqrt(stats_df['var'])
+    stats_df['se'] = stats_df['std'] / np.sqrt(stats_df['count'])
+    stats_df['ci_err'] = 1.96 * stats_df['se']
+    stats_df['scatter_err'] = 1.96 * stats_df['std']
 
-    stats = stats.drop(columns=['sum_age', 'sum_age_square', 'var', 'std', 'se'])
+    stats_df = stats_df.drop(columns=['sum_age', 'sum_age_square', 'var', 'std', 'se'])
 
     elapsed = time.perf_counter() - start
-    logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats)} десятилетий")
-    return stats
+    logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats_df)} десятилетий")
+    return stats_df
 
 
 def plot_decade_stats(stats_df: pd.DataFrame):
