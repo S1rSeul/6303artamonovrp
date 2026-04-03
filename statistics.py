@@ -15,11 +15,17 @@ def extract_year(series: pd.Series) -> pd.Series:
     if mask.any():
         dates = pd.to_datetime(series[mask], errors='coerce')
         years.loc[mask] = dates.dt.year
-    return years
+    return years.astype('Int32')
 
 
 def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
-    reader = pd.read_csv(filepath, chunksize=chunksize, low_memory=False)
+    dtype = {
+        'Culture' : 'category',
+        'AccessionYear' : 'string',
+        'Object Begin Date' : 'string',
+    }
+    usecols = ['Culture', 'AccessionYear', 'Object Begin Date']
+    reader = pd.read_csv(filepath, chunksize=chunksize, low_memory=False, dtype=dtype, usecols=usecols)
     for chunk in reader:
         yield chunk
 
@@ -37,10 +43,14 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
         chunk['AccessionYear'] = extract_year(chunk['AccessionYear'])
         chunk['Object Begin Date'] = extract_year(chunk['Object Begin Date'])
         chunk['age'] = chunk['AccessionYear'] - chunk['Object Begin Date']
+        chunk = chunk.drop('Object Begin Date', axis=1)
         chunk.loc[chunk['age'] < 0, 'age'] = np.nan
+
         original_len = len(chunk)
         total_rows += original_len
+
         chunk.dropna(subset=['Culture', 'age'], inplace=True)
+        chunk['age_square'] = (chunk['age'] ** 2).astype('Int32')
         kept = len(chunk)
 
         elapsed = time.perf_counter() - start
@@ -53,7 +63,6 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
 
     logging.info(f"Всего прочитано строк: {total_rows}, обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
 
-
 def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
     logging.info("Начало агрегации данных...")
     total_elapsed = 0.0
@@ -62,22 +71,23 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
     year_frames = []
 
     chunk_counter = 0
+
     for df in processed_iter:
         chunk_counter += 1
         chunk_start = time.perf_counter()
 
-        culture_aggregate = df.groupby('Culture').agg(
+        chunk_stats = df.groupby('Culture', as_index=False).agg(
             count=('age', 'count'),
             sum_age=('age', 'sum'),
-            sum_age_square=('age', lambda x: (x ** 2).sum()),
+            sum_age_square=('age_square', 'sum'),
             min_accession=('AccessionYear', 'min'),
             max_accession=('AccessionYear', 'max'),
-        ).reset_index()
-        stats_frames.append(culture_aggregate)
+        )
+        stats_frames.append(chunk_stats)
 
-        year_aggregate = df.groupby(['Culture', 'AccessionYear'])['age'].agg(['sum', 'count']).reset_index()
-        year_aggregate.columns = ['Culture', 'AccessionYear', 'sum_age', 'count']
-        year_frames.append(year_aggregate)
+        chunk_year = df.groupby(['Culture', 'AccessionYear'], as_index=False)['age'].agg(['sum', 'count'])
+        chunk_year.columns = ['Culture', 'AccessionYear', 'sum_age', 'count']
+        year_frames.append(chunk_year)
 
         chunk_elapsed = time.perf_counter() - chunk_start
         total_elapsed += chunk_elapsed
@@ -86,26 +96,24 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> tuple:
     logging.info("Объединение результатов агрегации...")
     start_merge = time.perf_counter()
 
-    if stats_frames:
-        stats_all = pd.concat(stats_frames, ignore_index=True)
-        stats_df = stats_all.groupby('Culture').agg(
-            count=('count', 'sum'),
-            sum_age=('sum_age', 'sum'),
-            sum_age_square=('sum_age_square', 'sum'),
-            min_accession=('min_accession', 'min'),
-            max_accession=('max_accession', 'max'),
-        )
-    else:
-        stats_df = pd.DataFrame(columns=['count', 'sum_age', 'sum_age_square', 'min_accession', 'max_accession'])
+    stats_all = pd.concat(stats_frames, ignore_index=True)
+    stats_df = stats_all.groupby('Culture').agg(
+        count=('count', 'sum'),
+        sum_age=('sum_age', 'sum'),
+        sum_age_square=('sum_age_square', 'sum'),
+        min_accession=('min_accession', 'min'),
+        max_accession=('max_accession', 'max'),
+    )
+    stats_df['count'] = stats_df['count'].astype('Int32')
 
-    if year_frames:
-        year_all = pd.concat(year_frames, ignore_index=True)
-        year_df = year_all.groupby(['Culture', 'AccessionYear']).agg(
-            sum_age=('sum_age', 'sum'),
-            count=('count', 'sum'),
-        ).reset_index()
-    else:
-        year_df = pd.DataFrame(columns=['Culture', 'AccessionYear', 'sum_age', 'count'])
+    year_all = pd.concat(year_frames, ignore_index=True)
+    year_df = year_all.groupby(['Culture', 'AccessionYear'], as_index=False).agg(
+        sum_age=('sum_age', 'sum'),
+        count=('count', 'sum'),
+    )
+    year_df['count'] = year_df['count'].astype('Int32')
+    year_df['Culture'] = year_df['Culture'].astype('category')
+
 
     merge_elapsed = time.perf_counter() - start_merge
     total_elapsed += merge_elapsed
@@ -124,10 +132,8 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     stats['var'] = (stats['sum_age_square'] / stats['count']) - stats['mean'] ** 2
     stats['std'] = np.sqrt(stats['var'])
     stats['se'] = stats['std'] / np.sqrt(stats['count'])
-    stats['ci_low'] = stats['mean'] - 1.96 * stats['se']
-    stats['ci_high'] = stats['mean'] + 1.96 * stats['se']
-    stats['scatter_low'] = stats['mean'] - 1.96 * stats['std']
-    stats['scatter_high'] = stats['mean'] + 1.96 * stats['std']
+    stats['ci_err'] = 1.96 * stats['se']
+    stats['scatter_err'] = 1.96 * stats['std']
     stats['range_accession'] = stats['max_accession'] - stats['min_accession']
 
     stats = stats.drop(columns=['sum_age', 'sum_age_square', 'var', 'std', 'se'])
@@ -142,22 +148,15 @@ def plot_top_n(stats_df: pd.DataFrame, top_n: int = 10):
 
     cultures = top.index.tolist()
     means = top['mean'].values
-    ci_lows = top['ci_low'].values
-    ci_highs = top['ci_high'].values
-    scatter_lows = top['scatter_low'].values
-    scatter_highs = top['scatter_high'].values
-
-    ci_err_low = [mean - ci_low for mean, ci_low in zip(means, ci_lows)]
-    ci_err_high = [ci_high - mean for mean, ci_high in zip(means, ci_highs)]
-    scatter_err_low = [mean - scatter_low for mean, scatter_low in zip(means, scatter_lows)]
-    scatter_err_high = [scatter_high - mean for mean, scatter_high in zip(means, scatter_highs)]
+    ci_errs = top['ci_err'].values
+    scatter_errs = top['scatter_err'].values
 
     x = np.arange(len(cultures))
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.bar(x, means, width=0.6, alpha=0.7, color='steelblue', label='Средний возраст')
-    ax.errorbar(x, means, yerr=[ci_err_low, ci_err_high], fmt='none',
+    ax.errorbar(x, means, yerr=ci_errs, fmt='none',
                 ecolor='red', capsize=5, capthick=2, label='95% доверительный интервал')
-    ax.errorbar(x, means, yerr=[scatter_err_low, scatter_err_high], fmt='none',
+    ax.errorbar(x, means, yerr=scatter_errs, fmt='none',
                 ecolor='gray', capsize=5, capthick=1, alpha=0.6, label='95% интервал рассеяния')
     ax.set_xticks(x)
     ax.set_xticklabels(cultures, rotation=45, ha='right')
@@ -214,8 +213,8 @@ def main(csv_path: str, chunksize: int = 50_000, top_n: int = 10, rolling_window
     for idx, row in top.iterrows():
         print(f"{idx}: {row['count']:.0f} объектов, "
               f"средний возраст = {row['mean']:.1f} лет, "
-              f"95% доверительный интервал: ({row['ci_low']:.3f}, {row['ci_high']:.3f}), "
-              f"95% интервал рассеяния: ({row['scatter_low']:.3f}, {row['scatter_high']:.3f})")
+              f"95% доверительный интервал: ({row['mean'] - row['ci_err']:.3f}, {row['mean'] + row['ci_err']:.3f}), "
+              f"95% интервал рассеяния: ({row['mean'] - row['scatter_err']:.3f}, {row['mean'] + row['scatter_err']:.3f})")
 
     idx_longest = stats['range_accession'].idxmax()
     row_longest = stats.loc[idx_longest]
