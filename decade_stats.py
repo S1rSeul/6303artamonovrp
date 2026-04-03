@@ -1,27 +1,32 @@
 import logging
 import time
+from typing import Iterator
+
+import matplotlib.pyplot as plt
+
+import numpy as np
 
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Iterator
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 def extract_year(series: pd.Series) -> pd.Series:
     years = pd.to_numeric(series, errors='coerce')
     mask = years.isna()
+
     if mask.any():
         dates = pd.to_datetime(series[mask], errors='coerce')
         years.loc[mask] = dates.dt.year
+
     return years.astype('Int32')
 
 
 def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
     dtype = {
-        'AccessionYear' : 'string',
-        'Object Begin Date' : 'string',
+        'AccessionYear': 'string',
+        'Object Begin Date': 'string',
     }
     usecols = ['AccessionYear', 'Object Begin Date']
     reader = pd.read_csv(filepath, chunksize=chunksize, low_memory=False, dtype=dtype, usecols=usecols)
@@ -49,7 +54,7 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
         total_rows += original_len
 
         chunk.dropna(subset=['age'], inplace=True)
-        chunk['age_square'] = (chunk['age'] ** 2).astype('Int32')
+        chunk['age_square'] = chunk['age'] ** 2
         kept = len(chunk)
 
         elapsed = time.perf_counter() - start
@@ -62,11 +67,12 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
 
     logging.info(f"Всего прочитано строк: {total_rows}, обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
 
+
 def aggregate(processed_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
     logging.info("Начало агрегации данных...")
     total_elapsed = 0.0
 
-    stats_frames = []
+    stats_dict = {}
     chunk_counter = 0
 
     for df in processed_iter:
@@ -74,28 +80,34 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
         chunk_start = time.perf_counter()
 
         df['decade'] = (df['AccessionYear'] // 10) * 10
-
         chunk_stats = df.groupby('decade', as_index=False).agg(
             count=('age', 'count'),
             sum_age=('age', 'sum'),
             sum_age_square=('age_square', 'sum'),
         )
-        stats_frames.append(chunk_stats)
+
+        decades = chunk_stats['decade'].values
+        counts = chunk_stats['count'].values
+        sum_ages = chunk_stats['sum_age'].values
+        sum_age_squares = chunk_stats['sum_age_square'].values
+
+        for dec, cnt, s_age, s_age_sq in zip(decades, counts, sum_ages, sum_age_squares):
+            if dec in stats_dict:
+                stats_dict[dec][0] += cnt
+                stats_dict[dec][1] += s_age
+                stats_dict[dec][2] += s_age_sq
+            else:
+                stats_dict[dec] = [cnt, s_age, s_age_sq]
 
         chunk_elapsed = time.perf_counter() - chunk_start
         total_elapsed += chunk_elapsed
         logging.info(f"Агрегация чанка {chunk_counter} заняла {chunk_elapsed:.3f} сек")
 
-    logging.info("Объединение результатов агрегации...")
+    logging.info("Формирование итогового DataFrame...")
     start_merge = time.perf_counter()
 
-    stats_all = pd.concat(stats_frames, ignore_index=True)
-    stats_df = stats_all.groupby('decade').agg(
-        count=('count', 'sum'),
-        sum_age=('sum_age', 'sum'),
-        sum_age_square=('sum_age_square', 'sum'),
-    )
-    stats_df['count'] = stats_df['count'].astype('Int32')
+    stats_df = pd.DataFrame.from_dict(stats_dict, orient='index', columns=['count', 'sum_age', 'sum_age_square'])
+    stats_df['count'] = stats_df['count'].astype('int32')
 
     merge_elapsed = time.perf_counter() - start_merge
     total_elapsed += merge_elapsed
@@ -122,7 +134,7 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     return stats_df
 
 
-def plot_decade_stats(stats_df: pd.DataFrame):
+def plot_decade_stats(stats_df: pd.DataFrame) -> None:
     decades = stats_df.index.values
     means = stats_df['mean'].values
     ci_errs = stats_df['ci_err'].values
@@ -145,14 +157,14 @@ def plot_decade_stats(stats_df: pd.DataFrame):
     plt.show()
 
 
-def plot_decade_differences(stats_df: pd.DataFrame):
+def plot_decade_differences(stats_df: pd.DataFrame) -> None:
     decades = stats_df.index.values
-    means = stats_df['mean'].values
 
     if len(decades) < 2:
-        logging.warning("Недостаточно десятилетий для построения графика различий.")
+        logging.warning("Недостаточно десятилетий для построения графика различий")
         return
 
+    means = stats_df['mean'].values
     diffs = np.diff(means)
     diff_decades = decades[1:]
 
@@ -167,7 +179,7 @@ def plot_decade_differences(stats_df: pd.DataFrame):
     plt.show()
 
 
-def main(csv_path: str, chunksize: int = 50_000):
+def main(csv_path: str, chunksize: int = 50_000) -> None:
     total_start = time.perf_counter()
     logging.info(f"Начало обработки файла: {csv_path}")
 
@@ -182,17 +194,18 @@ def main(csv_path: str, chunksize: int = 50_000):
     logging.info("Формирование и вывод результатов...")
 
     print("\nСтатистика по десятилетиям:")
-    for decade, row in stats.iterrows():
-        print(f"{decade}–{decade + 9}: {row['count']} объектов, "
-              f"средний возраст = {row['mean']:.1f} лет, "
-              f"95% ДИ: ({row['mean'] - row['ci_err']:.1f}, {row['mean'] + row['ci_err']:.1f}), "
-              f"95% интервал рассеяния: ({row['mean'] - row['scatter_err']:.1f}, {row['mean'] + row['scatter_err']:.1f})")
+    for row in stats.itertuples():
+        print(f"{row.Index}–{row.Index + 9}: {row.count} объектов, "
+              f"средний возраст = {row.mean:.1f} лет, "
+              f"95% ДИ: ({row.mean - row.ci_err:.1f}, {row.mean + row.ci_err:.1f}), "
+              f"95% интервал рассеяния: ({row.mean - row.scatter_err:.1f}, {row.mean + row.scatter_err:.1f})")
 
     total_elapsed = time.perf_counter() - total_start
     logging.info(f"Общее время выполнения: {total_elapsed:.3f} сек")
 
     plot_decade_stats(stats)
     plot_decade_differences(stats)
+
 
 if __name__ == "__main__":
     csv = "MetObjects.csv"
