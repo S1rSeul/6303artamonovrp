@@ -167,7 +167,7 @@ def plot_decade_differences(stats_df: pd.DataFrame) -> None:
     plt.show()
 
 
-def main(csv_path: str, chunksize: int = 50_000) -> None:
+def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
     total_start = time.perf_counter()
     logging.info(f"Начало обработки файла: {csv_path}")
 
@@ -197,4 +197,4 @@ def main(csv_path: str, chunksize: int = 50_000) -> None:
 
 if __name__ == "__main__":
     csv = "MetObjects.csv"
-    main(csv)
+    run_pipeline(csv)
