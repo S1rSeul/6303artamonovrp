@@ -128,6 +128,9 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     stats_df['scatter_err'] = 1.96 * stats_df['std']
 
     stats_df = stats_df.drop(columns=['sum_age', 'sum_age_square', 'var', 'std', 'se'])
+    stats_df['mean'] = stats_df['mean'].astype('float32')
+    stats_df['ci_err'] = stats_df['ci_err'].astype('float32')
+    stats_df['scatter_err'] = stats_df['scatter_err'].astype('float32')
 
     elapsed = time.perf_counter() - start
     logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats_df)} десятилетий")
