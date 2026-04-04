@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Iterator
+from typing import Generator
 
 import matplotlib.pyplot as plt
 
@@ -23,7 +23,7 @@ def extract_year(series: pd.Series) -> pd.Series:
     return years.astype('Int32')
 
 
-def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
+def read_chunks(filepath: str, chunksize: int = 50_000) -> Generator[pd.DataFrame]:
     dtype = {
         'AccessionYear': 'string',
         'Object Begin Date': 'string',
@@ -34,7 +34,7 @@ def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame
         yield chunk
 
 
-def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
+def process_chunk(chunk_iter: Generator[pd.DataFrame]) -> Generator[pd.DataFrame]:
     chunk_count = 0
     total_rows = 0
     total_rows_processed = 0
@@ -68,7 +68,7 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
     logging.info(f"Всего прочитано строк: {total_rows}, обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
 
 
-def aggregate(processed_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
+def aggregate(processed_iter: Generator[pd.DataFrame]) -> pd.DataFrame:
     logging.info("Начало агрегации данных...")
     total_elapsed = 0.0
 
