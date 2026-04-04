@@ -105,21 +105,25 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     logging.info("Расчет статистик...")
     start = time.perf_counter()
 
-    stats_df['mean'] = stats_df['sum_age'] / stats_df['count']
-    stats_df['var'] = (stats_df['sum_age_square'] / stats_df['count']) - stats_df['mean'] ** 2
-    stats_df['std'] = np.sqrt(stats_df['var'])
-    stats_df['se'] = stats_df['std'] / np.sqrt(stats_df['count'])
-    stats_df['ci_err'] = 1.96 * stats_df['se']
-    stats_df['scatter_err'] = 1.96 * stats_df['std']
+    n = stats_df['count']
+    mean = stats_df['sum_age'] / n
+    var = (stats_df['sum_age_square'] / n) - mean ** 2
+    std = np.sqrt(var)
+    se = std / np.sqrt(n)
+    ci_err = 1.96 * se
+    scatter_err = 1.96 * std
 
-    stats_df = stats_df.drop(columns=['sum_age', 'sum_age_square', 'var', 'std', 'se'])
-    stats_df['mean'] = stats_df['mean'].astype('float32')
-    stats_df['ci_err'] = stats_df['ci_err'].astype('float32')
-    stats_df['scatter_err'] = stats_df['scatter_err'].astype('float32')
+    stats = pd.DataFrame({
+        'count': n,
+        'mean': mean,
+        'ci_err': ci_err,
+        'scatter_err': scatter_err,
+    }, dtype='float32')
+    stats['count'] = stats['count'].astype('int32')
 
     elapsed = time.perf_counter() - start
     logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats_df)} десятилетий")
-    return stats_df
+    return stats
 
 
 def plot_decade_stats(stats_df: pd.DataFrame) -> None:
