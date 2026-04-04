@@ -72,7 +72,7 @@ def aggregate(processed_iter: Generator[pd.DataFrame]) -> pd.DataFrame:
     logging.info("Начало агрегации данных...")
     total_elapsed = 0.0
 
-    stats_dict = {}
+    stats_df = pd.DataFrame()
     chunk_counter = 0
 
     for df in processed_iter:
@@ -80,39 +80,24 @@ def aggregate(processed_iter: Generator[pd.DataFrame]) -> pd.DataFrame:
         chunk_start = time.perf_counter()
 
         df['decade'] = (df['AccessionYear'] // 10) * 10
-        chunk_stats = df.groupby('decade', as_index=False).agg(
+        chunk_stats = df.groupby('decade').agg(
             count=('age', 'count'),
             sum_age=('age', 'sum'),
             sum_age_square=('age_square', 'sum'),
         )
 
-        decades = chunk_stats['decade'].values
-        counts = chunk_stats['count'].values
-        sum_ages = chunk_stats['sum_age'].values
-        sum_age_squares = chunk_stats['sum_age_square'].values
-
-        for dec, cnt, s_age, s_age_sq in zip(decades, counts, sum_ages, sum_age_squares):
-            if dec in stats_dict:
-                stats_dict[dec][0] += cnt
-                stats_dict[dec][1] += s_age
-                stats_dict[dec][2] += s_age_sq
-            else:
-                stats_dict[dec] = [cnt, s_age, s_age_sq]
+        if stats_df.empty:
+            stats_df = chunk_stats
+        else:
+            stats_df = stats_df.add(chunk_stats)
 
         chunk_elapsed = time.perf_counter() - chunk_start
         total_elapsed += chunk_elapsed
         logging.info(f"Агрегация чанка {chunk_counter} заняла {chunk_elapsed:.3f} сек")
 
-    logging.info("Формирование итогового DataFrame...")
-    start_merge = time.perf_counter()
-
-    stats_df = pd.DataFrame.from_dict(stats_dict, orient='index', columns=['count', 'sum_age', 'sum_age_square'])
     stats_df['count'] = stats_df['count'].astype('int32')
 
-    merge_elapsed = time.perf_counter() - start_merge
-    total_elapsed += merge_elapsed
-
-    logging.info(f"Агрегация завершена за {total_elapsed:.3f} сек (объединение: {merge_elapsed:.3f} сек)")
+    logging.info(f"Агрегация завершена за {total_elapsed:.3f} сек")
     return stats_df
 
 
