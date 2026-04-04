@@ -47,7 +47,7 @@ def process_chunk(chunk_iter: Generator[pd.DataFrame]) -> Generator[pd.DataFrame
         chunk['AccessionYear'] = extract_year(chunk['AccessionYear'])
         chunk['Object Begin Date'] = extract_year(chunk['Object Begin Date'])
         chunk['age'] = chunk['AccessionYear'] - chunk['Object Begin Date']
-        chunk = chunk.drop('Object Begin Date', axis=1)
+        chunk.drop('Object Begin Date', axis=1, inplace=True)
         chunk.loc[chunk['age'] < 0, 'age'] = np.nan
 
         original_len = len(chunk)
