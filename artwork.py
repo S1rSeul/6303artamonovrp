@@ -33,14 +33,16 @@ def timeit(func: Callable) -> Callable:
 
 
 def get_painting_id(csv_path: str) -> str:
-    paintings = []
-    with open(csv_path, mode='r', encoding='utf-8') as f:
-        for row in csv.DictReader(f):
-            if (row.get('Classification') == 'Paintings'
-                    and row.get('Is Public Domain') == 'True'):
-                paintings.append(row.get("Object ID"))
+    if not hasattr(get_painting_id, 'paintings'):
+        paintings = []
+        with open(csv_path, mode='r', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                if (row.get('Classification') == 'Paintings'
+                        and row.get('Is Public Domain') == 'True'):
+                    paintings.append(row.get("Object ID"))
+        get_painting_id.paintings = paintings
 
-    return random.choice(paintings)
+    return random.choice(get_painting_id.paintings)
 
 
 def fetch_object_metadata(object_id: str) -> dict:
@@ -367,7 +369,7 @@ class ImageProcessor:
         logging.info(f"Обработка с префиксом '{prefix}' завершена.")
 
     @timeit
-    def run_pipeline(self) -> None:
+    def process_single_image(self) -> None:
         logging.info("Запуск пайплайна обработки изображений")
 
         logging.info("Получение случайной картины")
