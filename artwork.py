@@ -34,6 +34,7 @@ def timeit(func: Callable) -> Callable:
 
 def get_painting_id(csv_path: str) -> str:
     if not hasattr(get_painting_id, 'paintings'):
+        logging.info(f"Чтение файла {csv_path}...")
         paintings = []
         with open(csv_path, mode='r', encoding='utf-8') as f:
             for row in csv.DictReader(f):
@@ -41,6 +42,7 @@ def get_painting_id(csv_path: str) -> str:
                         and row.get('Is Public Domain') == 'True'):
                     paintings.append(row.get("Object ID"))
         get_painting_id.paintings = paintings
+        logging.info(f"Чтение файла {csv_path} завершено")
 
     return random.choice(get_painting_id.paintings)
 
@@ -286,9 +288,7 @@ class ImageProcessor:
         os.makedirs(self._output_dir, exist_ok=True)
 
     @timeit
-    def download_random_painting(self) -> Artwork:
-        object_id = get_painting_id(self._csv_path)
-        logging.info(f"Выбрана картина ID {object_id}")
+    def download_painting_by_id(self, object_id: str, output_dir: str) -> Artwork:
         logging.info(f"Загрузка метаданных для объекта {object_id}")
         metadata = fetch_object_metadata(object_id)
 
@@ -296,14 +296,14 @@ class ImageProcessor:
         if not primary_image:
             raise ValueError(f"У объекта {object_id} отсутствует primaryImage")
 
-        img_path = os.path.join(self._output_dir, 'image.jpg')
+        img_path = os.path.join(output_dir, 'image.jpg')
         logging.info(f"Скачивание изображения: {primary_image}")
         download_image(primary_image, img_path)
         logging.info(f"Изображение сохранено в {img_path}")
 
         image = cv2.imread(img_path)
 
-        json_path = os.path.join(self._output_dir, 'image.json')
+        json_path = os.path.join(output_dir, 'image.json')
         save_metadata(metadata, json_path)
         logging.info(f"Метаданные сохранены в {json_path}")
 
@@ -318,10 +318,10 @@ class ImageProcessor:
         return artwork
 
     @timeit
-    def process_artwork(self, artwork: Artwork, prefix: str = '') -> None:
-        logging.info(f"Начало обработки изображения с префиксом '{prefix}'...")
+    def process_artwork(self, artwork: Artwork, output_dir: str, prefix: str = '') -> None:
+        logging.info(f"Начало обработки изображения с префиксом '{prefix}' в {output_dir}...")
 
-        orig_path = os.path.join(self._output_dir, f'image_{prefix}_original.jpg')
+        orig_path = os.path.join(output_dir, f'image_{prefix}_original.jpg')
         cv2.imwrite(orig_path, artwork.image)
         logging.info(f"Оригинал изображения сохранен в {orig_path}")
 
@@ -355,56 +355,63 @@ class ImageProcessor:
         logging.info(f"Обработка изображения ручными методами")
         for function, suffix, kwargs in operations_manual:
             result = function(**kwargs)
-            out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
+            out_path = os.path.join(output_dir, f'image_{prefix}_{suffix}.jpg')
             cv2.imwrite(out_path, result.image)
         logging.info(f"Обработка изображения ручными методами завершена")
 
         logging.info(f"Обработка изображения opencv методами")
         for function, suffix, kwargs in operations_opencv:
             result = function(**kwargs)
-            out_path = os.path.join(self._output_dir, f'image_{prefix}_{suffix}.jpg')
+            out_path = os.path.join(output_dir, f'image_{prefix}_{suffix}.jpg')
             cv2.imwrite(out_path, result.image)
         logging.info(f"Обработка изображения opencv методами завершена")
 
-        logging.info(f"Обработка с префиксом '{prefix}' завершена.")
+        logging.info(f"Обработка с префиксом '{prefix}' в {output_dir} завершена.")
 
     @timeit
-    def process_single_image(self) -> None:
-        logging.info("Запуск пайплайна обработки изображений")
+    def run_pipeline(self, num_paintings: int = 1) -> None:
+        logging.info(f"Запуск пайплайна обработки {num_paintings} изображений")
 
-        logging.info("Получение случайной картины")
-        artwork_original = self.download_random_painting()
-        logging.info("Получение случайной картины завершено")
+        for i in range(num_paintings):
+            object_id = get_painting_id(self._csv_path)
+            logging.info(f"Обработка картины {i+1}/{num_paintings} (ID: {object_id})")
 
-        logging.info("Обработка оригинального изображения")
-        self.process_artwork(artwork_original, prefix='color')
-        logging.info("Обработка оригинального изображения завершена")
+            painting_dir = os.path.join(self._output_dir, object_id)
+            os.makedirs(painting_dir, exist_ok=True)
 
-        logging.info("Обработка ЧБ изображения")
-        artwork_grayscale = artwork_original.grayscale()
-        self.process_artwork(artwork_grayscale, prefix='gray')
-        logging.info("Обработка ЧБ изображения завершена")
+            logging.info(f"Скачивание изображения {object_id}")
+            artwork_original = self.download_painting_by_id(object_id, painting_dir)
+            logging.info(f"Скачивание изображения {object_id} завершено")
 
-        logging.info("Создание sobel-версии artwork")
-        artwork_sobel = artwork_grayscale.sobel()
-        logging.info("Создание sobel-версии artwork завершено")
+            logging.info("Обработка оригинального изображения")
+            self.process_artwork(artwork_original, painting_dir, prefix='color')
+            logging.info("Обработка оригинального изображения завершена")
 
-        logging.info("Сложение оригинального и sobel artwork")
-        artwork_sum = artwork_original + artwork_sobel
-        sum_path = os.path.join(self._output_dir, 'image_original_plus_sobel.jpg')
-        cv2.imwrite(sum_path, artwork_sum.image)
-        logging.info(f"Результат сложения сохранен в {sum_path}")
+            logging.info("Обработка ЧБ изображения")
+            artwork_grayscale = artwork_original.grayscale()
+            self.process_artwork(artwork_original, painting_dir, prefix='gray')
+            logging.info("Обработка ЧБ изображения завершена")
 
-        logging.info("Демонстрация полиморфизма: выравнивание гистограммы для разных типов")
-        for a in [artwork_original, artwork_grayscale]:
-            eq = a.equalize_hist(method='opencv')
-            out_path = os.path.join(self._output_dir, f'image_eq_{a.__class__.__name__}.jpg')
-            cv2.imwrite(out_path, eq.image)
-            logging.info(f"Сохранён результат для {a.__class__.__name__} в {out_path}")
+            logging.info("Создание sobel-версии artwork")
+            artwork_sobel = artwork_grayscale.sobel()
+            logging.info("Создание sobel-версии artwork завершено")
+
+            logging.info("Сложение оригинального и sobel artwork")
+            artwork_sum = artwork_original + artwork_sobel
+            sum_path = os.path.join(painting_dir, 'image_original_plus_sobel.jpg')
+            cv2.imwrite(sum_path, artwork_sum.image)
+            logging.info(f"Результат сложения сохранен в {sum_path}")
+
+            logging.info("Демонстрация полиморфизма: выравнивание гистограммы для разных типов")
+            for a in [artwork_original, artwork_grayscale]:
+                eq = a.equalize_hist(method='opencv')
+                out_path = os.path.join(painting_dir, f'image_eq_{a.__class__.__name__}.jpg')
+                cv2.imwrite(out_path, eq.image)
+                logging.info(f"Сохранён результат для {a.__class__.__name__} в {out_path}")
 
         logging.info("Пайплайн успешно завершен")
 
 
 if __name__ == '__main__':
     processor = ImageProcessor()
-    processor.run_pipeline()
+    processor.run_pipeline(num_paintings=3)
