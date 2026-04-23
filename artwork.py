@@ -3,6 +3,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import aiofiles
 import aiohttp
+import shutil
 
 
 import csv
@@ -407,9 +408,13 @@ class ImageProcessor:
         self._csv_path = csv_path
         self._output_dir = output_dir
         self._download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
-        os.makedirs(self._output_dir, exist_ok=True)
 
     async def run_pipeline(self, num_paintings: int) -> None:
+        if os.path.exists(self._output_dir):
+            logging.info(f"Очистка папки {self._output_dir}...")
+            shutil.rmtree(self._output_dir)
+        os.makedirs(self._output_dir, exist_ok=True)
+
         start = time.perf_counter()
         logging.info(f"Запуск пайплайна обработки {num_paintings} изображений")
 
