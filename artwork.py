@@ -1,6 +1,6 @@
 import asyncio
 import sys
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import aiofiles
 import aiohttp
 
@@ -12,7 +12,7 @@ import os
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Optional
 
 import cv2
 
@@ -52,13 +52,26 @@ async def _download_one_image(
     session: aiohttp.ClientSession,
     idx: int,
     object_id: str,
-    output_dir: str
+    output_dir: str,
+    semaphore: Optional[asyncio.Semaphore] = None,
 ) -> dict:
     num = idx + 1
 
     img_dir = os.path.join(output_dir, f"{num}_{object_id}")
     os.makedirs(img_dir, exist_ok=True)
 
+    if semaphore:
+        async with semaphore:
+            return await _do_download(session, num, object_id, img_dir)
+    return await _do_download(session, num, object_id, img_dir)
+
+
+async def _do_download(
+    session: aiohttp.ClientSession,
+    num: int,
+    object_id: str,
+    img_dir: str
+) -> dict:
     logging.info(f"Скачивание изображения {num} начато (ID: {object_id})")
 
     meta_url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
@@ -81,10 +94,11 @@ async def _download_one_image(
         await f.write(image_data)
     async with aiofiles.open(meta_path, 'w', encoding='utf-8') as f:
         await f.write(json.dumps(metadata, indent=2, ensure_ascii=False))
+        await f.flush()
 
     logging.info(f"Скачивание изображения {num} завершено (ID: {object_id})")
     return {
-        'idx': idx,
+        'idx': num - 1,
         'num': num,
         'object_id': object_id,
         'image_path': orig_path,
@@ -92,15 +106,12 @@ async def _download_one_image(
         'metadata': metadata,
     }
 
+
 def _process_artwork_in_subprocess(task_data: tuple) -> None:
-    idx, object_id, image_path, image_dir = task_data
+    idx, object_id, image_path, image_dir, metadata = task_data
     num = idx + 1
     pid = os.getpid()
     logging.info(f"Обработка изображения {num} начата (PID {pid}, ID: {object_id})")
-
-    meta_path = os.path.join(image_dir, f"{num}_{object_id}_metadata.json")
-    with open(meta_path, 'r', encoding='utf-8') as f:
-        metadata = json.load(f)
 
     image = cv2.imread(image_path)
     if image is None:
@@ -385,11 +396,17 @@ class GrayscaleArtwork(Artwork):
 
 
 class ImageProcessor:
-    __slots__ = ('_csv_path', '_output_dir')
+    __slots__ = ('_csv_path', '_output_dir', '_download_semaphore')
 
-    def __init__(self, csv_path: str = 'MetObjects.csv', output_dir: str = 'paintings'):
+    def __init__(
+        self,
+        csv_path: str = 'MetObjects.csv',
+        output_dir: str = 'paintings',
+        max_concurrent_downloads: int = 10
+    ):
         self._csv_path = csv_path
         self._output_dir = output_dir
+        self._download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
         os.makedirs(self._output_dir, exist_ok=True)
 
     async def run_pipeline(self, num_paintings: int) -> None:
@@ -405,7 +422,7 @@ class ImageProcessor:
 
         async with aiohttp.ClientSession() as session:
             tasks = [
-                _download_one_image(session, idx, obj_id, self._output_dir)
+                _download_one_image(session, idx, obj_id, self._output_dir, self._download_semaphore)
                 for idx, obj_id in enumerate(painting_ids)
             ]
 
@@ -423,6 +440,7 @@ class ImageProcessor:
                         result['object_id'],
                         result['image_path'],
                         result['image_dir'],
+                        result['metadata'],
                     )
                     fut = pool.submit(_process_artwork_in_subprocess, task_data)
                     proc_futures.append(fut)
@@ -432,8 +450,11 @@ class ImageProcessor:
 
                 logging.info(f"Ожидание завершения обработки {len(proc_futures)} изображений...")
                 proc_start = time.perf_counter()
-                for fut in proc_futures:
-                    fut.result()
+                for fut in as_completed(proc_futures):
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        logging.exception(f"Ошибка во время обработки изображения: {e}")
                 proc_time = time.perf_counter() - proc_start
                 logging.info(f"Обработка завершена за {proc_time:.2f} секунд")
 
