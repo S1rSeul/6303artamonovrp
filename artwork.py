@@ -124,14 +124,14 @@ def _process_artwork_in_subprocess(task_data: tuple) -> None:
     sigma = 1.0
     gamma = 0.5
 
-    operations_manual = [
-        (artwork.grayscale, 'grayscale_manual', {'method': 'manual'}),
-        (artwork.convolve, 'convolve_manual', {'kernel': sharpen_kernel, 'method': 'manual'}),
-        (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
-        (artwork.sobel, 'sobel_mag_manual', {'method': 'manual'}),
-        (artwork.gamma_correction, f'gamma_manual_g{gamma}', {'gamma': gamma, 'method': 'manual'}),
-        (artwork.equalize_hist, 'eq_hist_manual', {'method': 'manual'}),
-    ]
+    # operations_manual = [
+    #     (artwork.grayscale, 'grayscale_manual', {'method': 'manual'}),
+    #     (artwork.convolve, 'convolve_manual', {'kernel': sharpen_kernel, 'method': 'manual'}),
+    #     (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
+    #     (artwork.sobel, 'sobel_mag_manual', {'method': 'manual'}),
+    #     (artwork.gamma_correction, f'gamma_manual_g{gamma}', {'gamma': gamma, 'method': 'manual'}),
+    #     (artwork.equalize_hist, 'eq_hist_manual', {'method': 'manual'}),
+    # ]
 
     operations_opencv = [
         (artwork.grayscale, 'grayscale_opencv', {'method': 'opencv'}),
@@ -142,10 +142,10 @@ def _process_artwork_in_subprocess(task_data: tuple) -> None:
         (artwork.equalize_hist, 'eq_hist_opencv', {'method': 'opencv'}),
     ]
 
-    for function, suffix, kwargs in operations_manual:
-        result = function(**kwargs)
-        out_path = os.path.join(image_dir, f"{base_prefix}_{suffix}.jpg")
-        cv2.imwrite(out_path, result.image)
+    # for function, suffix, kwargs in operations_manual:
+    #     result = function(**kwargs)
+    #     out_path = os.path.join(image_dir, f"{base_prefix}_{suffix}.jpg")
+    #     cv2.imwrite(out_path, result.image)
 
     for function, suffix, kwargs in operations_opencv:
         result = function(**kwargs)
@@ -392,35 +392,6 @@ class ImageProcessor:
         self._output_dir = output_dir
         os.makedirs(self._output_dir, exist_ok=True)
 
-    async def download_paintings_async(self, painting_ids: List[str]) -> List[dict]:
-        async with aiohttp.ClientSession() as session:
-            tasks = [
-                _download_one_image(session, idx, obj_id, self._output_dir)
-                for idx, obj_id in enumerate(painting_ids)
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for res in results:
-                if isinstance(res, Exception):
-                    logging.error(f"Ошибка при скачивании: {res}")
-                    raise res
-        return results
-
-    @staticmethod
-    def process_paintings(download_results: List[dict]) -> None:
-        tasks = []
-        for res in download_results:
-            tasks.append((
-                res['idx'],
-                res['object_id'],
-                res['image_path'],
-                res['image_dir'],
-            ))
-
-        with ProcessPoolExecutor() as executor:
-            futures = [executor.submit(_process_artwork_in_subprocess, task) for task in tasks]
-            for future in futures:
-                future.result()
-
     async def run_pipeline(self, num_paintings: int) -> None:
         start = time.perf_counter()
         logging.info(f"Запуск пайплайна обработки {num_paintings} изображений")
@@ -431,15 +402,40 @@ class ImageProcessor:
 
         logging.info("Начало асинхронного скачивания...")
         download_start = time.perf_counter()
-        download_results = await self.download_paintings_async(painting_ids)
-        download_time = time.perf_counter() - download_start
-        logging.info(f"Скачивание завершено за {download_time:.2f} секунд")
 
-        logging.info(f"Запуск параллельной обработки {num_paintings} изображений...")
-        proc_start = time.perf_counter()
-        self.process_paintings(download_results)
-        proc_time = time.perf_counter() - proc_start
-        logging.info(f"Обработка завершена за {proc_time:.2f} секунд")
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                _download_one_image(session, idx, obj_id, self._output_dir)
+                for idx, obj_id in enumerate(painting_ids)
+            ]
+
+            proc_futures = []
+            with ProcessPoolExecutor() as pool:
+                for coro in asyncio.as_completed(tasks):
+                    try:
+                        result = await coro
+                    except Exception:
+                        logging.exception("Ошибка при скачивании изображения")
+                        raise
+
+                    task_data = (
+                        result['idx'],
+                        result['object_id'],
+                        result['image_path'],
+                        result['image_dir'],
+                    )
+                    fut = pool.submit(_process_artwork_in_subprocess, task_data)
+                    proc_futures.append(fut)
+
+                download_time = time.perf_counter() - download_start
+                logging.info(f"Скачивание завершено за {download_time:.2f} секунд")
+
+                logging.info(f"Ожидание завершения обработки {len(proc_futures)} изображений...")
+                proc_start = time.perf_counter()
+                for fut in proc_futures:
+                    fut.result()
+                proc_time = time.perf_counter() - proc_start
+                logging.info(f"Обработка завершена за {proc_time:.2f} секунд")
 
         complete_time = time.perf_counter() - start
         logging.info(f"Общее время работы: {complete_time:.2f} секунд")
