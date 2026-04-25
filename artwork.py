@@ -204,7 +204,6 @@ class Artwork(ABC):
         artist = self.metadata.get('artistDisplayName', 'Неизвестен')
         return f"{self.__class__.__name__}: '{title}' by {artist}"
 
-    @timeit
     def __add__(self, other: 'Artwork') -> 'Artwork':
         if not isinstance(other, Artwork):
             raise TypeError("Можно складывать только объекты Artwork")
@@ -253,12 +252,10 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    @timeit
     def convolve(self, kernel: ImageF32, astype: str = 'int', method: str = 'manual') -> 'Artwork':
         result = self._convolve_array(kernel, astype, method)
         return self.__class__(result, self.metadata)
 
-    @timeit
     def gaussian(self, ksize: int, sigma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             k = ksize // 2
@@ -273,7 +270,6 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    @timeit
     def sobel(self, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             sobel_x = np.array([
@@ -302,7 +298,6 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    @timeit
     def gamma_correction(self, gamma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             image = self.image.astype(np.float32) / 255.0
@@ -333,7 +328,6 @@ class ColorArtwork(Artwork):
             raise ValueError("ColorArtwork ожидает 3-канальное изображение")
         super().__init__(image, metadata)
 
-    @timeit
     def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
         if method == 'manual':
             weights = np.array((0.114, 0.587, 0.299), dtype=np.float32)
@@ -344,7 +338,6 @@ class ColorArtwork(Artwork):
             raise ValueError("method должен быть 'manual' или 'opencv'")
         return GrayscaleArtwork(gray, self.metadata)
 
-    @timeit
     def equalize_hist(self, method: str = 'manual') -> 'ColorArtwork':
         if method == 'manual':
             lab = cv2.cvtColor(self.image, cv2.COLOR_BGR2LAB)
@@ -377,11 +370,9 @@ class GrayscaleArtwork(Artwork):
             raise ValueError("GrayscaleArtwork ожидает 2-мерное изображение")
         super().__init__(image, metadata)
 
-    @timeit
     def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
         return GrayscaleArtwork(self.image, self.metadata)
 
-    @timeit
     def equalize_hist(self, method: str = 'manual') -> 'GrayscaleArtwork':
         if method == 'manual':
             hist = np.histogram(self.image.flatten(), 256, (0, 256))[0]
@@ -433,12 +424,14 @@ class ImageProcessor:
 
             proc_futures = []
             with ProcessPoolExecutor() as pool:
+                failed_downloads = 0
                 for coro in asyncio.as_completed(tasks):
                     try:
                         result = await coro
-                    except Exception:
-                        logging.exception("Ошибка при скачивании изображения")
-                        raise
+                    except Exception as e:
+                        failed_downloads += 1
+                        logging.exception(f"Ошибка при скачивании изображения: {e}")
+                        continue
 
                     task_data = (
                         result['idx'],
@@ -462,6 +455,9 @@ class ImageProcessor:
                         logging.exception(f"Ошибка во время обработки изображения: {e}")
                 proc_time = time.perf_counter() - proc_start
                 logging.info(f"Обработка завершена за {proc_time:.2f} секунд")
+
+        if failed_downloads:
+            logging.warning(f"Не удалось скачать {failed_downloads} изображений")
 
         complete_time = time.perf_counter() - start
         logging.info(f"Общее время работы: {complete_time:.2f} секунд")
