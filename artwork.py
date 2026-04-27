@@ -30,16 +30,6 @@ ImageF32 = NDArray[np.float32]
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - PID %(process)d - %(levelname)s - %(message)s')
 
 
-def timeit(func: Callable) -> Callable:
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        start = time.perf_counter()
-        result = func(*args, **kwargs)
-        end = time.perf_counter()
-        logging.info(f"[TIME] {func.__name__} выполнена за {end - start:.6f} секунд")
-        return result
-    return wrapper
-
-
 class Artwork(ABC):
     __slots__ = ('_image', '_metadata')
 
