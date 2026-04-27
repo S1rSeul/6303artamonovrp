@@ -114,7 +114,7 @@ def _process_artwork_in_subprocess(task_data: tuple) -> None:
     pid = os.getpid()
     logging.info(f"Обработка изображения {num} начата (PID {pid}, ID: {object_id})")
 
-    image = cv2.imread(image_path)
+    image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
         raise ValueError(f"Не удалось загрузить изображение {image_path}")
 
@@ -446,7 +446,7 @@ class ImageProcessor:
                 download_time = time.perf_counter() - download_start
                 logging.info(f"Скачивание завершено за {download_time:.2f} секунд")
 
-                logging.info(f"Ожидание завершения обработки {len(proc_futures)} изображений...")
+                logging.info(f"Ожидание завершения обработки изображений...")
                 proc_start = time.perf_counter()
                 for fut in as_completed(proc_futures):
                     try:
