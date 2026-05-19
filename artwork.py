@@ -1,3 +1,13 @@
+import asyncio
+import sys
+from concurrent.futures import ProcessPoolExecutor
+
+import aiofiles
+import aiohttp
+import shutil
+from collections.abc import AsyncGenerator
+
+
 import csv
 import json
 import logging
@@ -5,66 +15,19 @@ import os
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any, Callable, List, Optional
 
 import cv2
 
 import numpy as np
 from numpy.typing import NDArray
 
-import requests
-
 
 ImageU8 = NDArray[np.uint8]
 ImageF32 = NDArray[np.float32]
 
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-def timeit(func: Callable) -> Callable:
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        start = time.perf_counter()
-        result = func(*args, **kwargs)
-        end = time.perf_counter()
-        logging.info(f"[TIME] {func.__name__} выполнена за {end - start:.6f} секунд")
-        return result
-    return wrapper
-
-
-def get_painting_id(csv_path: str) -> str:
-    if not hasattr(get_painting_id, 'paintings'):
-        logging.info(f"Чтение файла {csv_path}...")
-        paintings = []
-        with open(csv_path, mode='r', encoding='utf-8') as f:
-            for row in csv.DictReader(f):
-                if (row.get('Classification') == 'Paintings'
-                        and row.get('Is Public Domain') == 'True'):
-                    paintings.append(row.get("Object ID"))
-        get_painting_id.paintings = paintings
-        logging.info(f"Чтение файла {csv_path} завершено")
-
-    return random.choice(get_painting_id.paintings)
-
-
-def fetch_object_metadata(object_id: str) -> dict:
-    url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-def download_image(image_url: str, save_path: str) -> None:
-    response = requests.get(image_url)
-    response.raise_for_status()
-
-    with open(save_path, 'wb') as f:
-        f.write(response.content)
-
-
-def save_metadata(data: dict, save_path: str) -> None:
-    with open(save_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - PID %(process)d - %(levelname)s - %(message)s')
 
 
 class Artwork(ABC):
@@ -87,7 +50,6 @@ class Artwork(ABC):
         artist = self.metadata.get('artistDisplayName', 'Неизвестен')
         return f"{self.__class__.__name__}: '{title}' by {artist}"
 
-    @timeit
     def __add__(self, other: 'Artwork') -> 'Artwork':
         if not isinstance(other, Artwork):
             raise TypeError("Можно складывать только объекты Artwork")
@@ -136,12 +98,10 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    @timeit
     def convolve(self, kernel: ImageF32, astype: str = 'int', method: str = 'manual') -> 'Artwork':
         result = self._convolve_array(kernel, astype, method)
         return self.__class__(result, self.metadata)
 
-    @timeit
     def gaussian(self, ksize: int, sigma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             k = ksize // 2
@@ -156,7 +116,6 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    @timeit
     def sobel(self, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             sobel_x = np.array([
@@ -185,7 +144,6 @@ class Artwork(ABC):
         else:
             raise ValueError("method должен быть 'manual' или 'opencv'")
 
-    @timeit
     def gamma_correction(self, gamma: float, method: str = 'manual') -> 'Artwork':
         if method == 'manual':
             image = self.image.astype(np.float32) / 255.0
@@ -216,7 +174,6 @@ class ColorArtwork(Artwork):
             raise ValueError("ColorArtwork ожидает 3-канальное изображение")
         super().__init__(image, metadata)
 
-    @timeit
     def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
         if method == 'manual':
             weights = np.array((0.114, 0.587, 0.299), dtype=np.float32)
@@ -227,7 +184,6 @@ class ColorArtwork(Artwork):
             raise ValueError("method должен быть 'manual' или 'opencv'")
         return GrayscaleArtwork(gray, self.metadata)
 
-    @timeit
     def equalize_hist(self, method: str = 'manual') -> 'ColorArtwork':
         if method == 'manual':
             lab = cv2.cvtColor(self.image, cv2.COLOR_BGR2LAB)
@@ -260,11 +216,9 @@ class GrayscaleArtwork(Artwork):
             raise ValueError("GrayscaleArtwork ожидает 2-мерное изображение")
         super().__init__(image, metadata)
 
-    @timeit
     def grayscale(self, method: str = 'manual') -> 'GrayscaleArtwork':
         return GrayscaleArtwork(self.image, self.metadata)
 
-    @timeit
     def equalize_hist(self, method: str = 'manual') -> 'GrayscaleArtwork':
         if method == 'manual':
             hist = np.histogram(self.image.flatten(), 256, (0, 256))[0]
@@ -280,138 +234,238 @@ class GrayscaleArtwork(Artwork):
 
 
 class ImageProcessor:
-    __slots__ = ('_csv_path', '_output_dir')
+    __slots__ = ('_csv_path', '_output_dir', '_download_semaphore')
 
-    def __init__(self, csv_path: str = 'MetObjects.csv', output_dir: str = 'paintings'):
+    def __init__(
+        self,
+        csv_path: str = 'MetObjects.csv',
+        output_dir: str = 'paintings',
+        max_concurrent_downloads: int = 10
+    ):
         self._csv_path = csv_path
         self._output_dir = output_dir
-        os.makedirs(self._output_dir, exist_ok=True)
+        self._download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
-    @timeit
-    def download_painting_by_id(self, object_id: str, output_dir: str) -> Artwork:
-        logging.info(f"Загрузка метаданных для объекта {object_id}")
-        metadata = fetch_object_metadata(object_id)
+    @staticmethod
+    def _load_painting_ids(csv_path: str, count: int) -> List[str]:
+        random.seed(1)
+
+        paintings = []
+        with open(csv_path, mode='r', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                if row.get('Classification') == 'Paintings' and row.get('Is Public Domain') == 'True':
+                    paintings.append(row.get("Object ID"))
+        return random.sample(paintings, count)
+
+    @staticmethod
+    def _process_artwork_in_subprocess(task_data: tuple) -> None:
+        idx, object_id, image_path, image_dir, metadata = task_data
+        num = idx + 1
+
+        try:
+            logging.info(f"Обработка изображения {num} начата (ID: {object_id})")
+
+            image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            if image is None:
+                raise ValueError(f"Не удалось загрузить изображение {image_path}")
+
+            if image.ndim == 3:
+                artwork = ColorArtwork(image, metadata)
+            elif image.ndim == 2:
+                artwork = GrayscaleArtwork(image, metadata)
+            else:
+                raise ValueError(f"Неподдерживаемая размерность: {image.shape}")
+
+            base_prefix = f"{num}_{object_id}"
+
+            sharpen_kernel = np.array([
+                [0, -1, 0],
+                [-1, 5, -1],
+                [0, -1, 0],
+            ], dtype=np.float32)
+            ksize = 3
+            sigma = 1.0
+            gamma = 0.5
+
+            # operations_manual = [
+            #     (artwork.grayscale, 'grayscale_manual', {'method': 'manual'}),
+            #     (artwork.convolve, 'convolve_manual', {'kernel': sharpen_kernel, 'method': 'manual'}),
+            #     (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
+            #     (artwork.sobel, 'sobel_mag_manual', {'method': 'manual'}),
+            #     (artwork.gamma_correction, f'gamma_manual_g{gamma}', {'gamma': gamma, 'method': 'manual'}),
+            #     (artwork.equalize_hist, 'eq_hist_manual', {'method': 'manual'}),
+            # ]
+
+            operations_opencv = [
+                (artwork.grayscale, 'grayscale_opencv', {'method': 'opencv'}),
+                (artwork.convolve, 'convolve_opencv', {'kernel': sharpen_kernel, 'method': 'opencv'}),
+                (artwork.gaussian, f'gaussian_opencv_ks{ksize}_s{sigma}',
+                 {'ksize': ksize, 'sigma': sigma, 'method': 'opencv'}),
+                (artwork.sobel, 'sobel_mag_opencv', {'method': 'opencv'}),
+                (artwork.gamma_correction, f'gamma_opencv_g{gamma}', {'gamma': gamma, 'method': 'opencv'}),
+                (artwork.equalize_hist, 'eq_hist_opencv', {'method': 'opencv'}),
+            ]
+
+            # for function, suffix, kwargs in operations_manual:
+            #     result = function(**kwargs)
+            #     out_path = os.path.join(image_dir, f"{base_prefix}_{suffix}.jpg")
+            #     cv2.imwrite(out_path, result.image)
+
+            for function, suffix, kwargs in operations_opencv:
+                result = function(**kwargs)
+                out_path = os.path.join(image_dir, f"{base_prefix}_{suffix}.jpg")
+                cv2.imwrite(out_path, result.image)
+
+            artwork_grayscale = artwork.grayscale()
+            gray_orig_path = os.path.join(image_dir, f"{base_prefix}_grayscale_original.jpg")
+            cv2.imwrite(gray_orig_path, artwork_grayscale.image)
+
+            artwork_sobel = artwork_grayscale.sobel()
+            sum_path = os.path.join(image_dir, f"{base_prefix}_original_plus_sobel.jpg")
+            try:
+                artwork_sum = artwork + artwork_sobel
+                cv2.imwrite(sum_path, artwork_sum.image)
+            except Exception as e:
+                logging.error(f"Ошибка при сложении для {num}: {e}")
+
+            for art in [artwork, artwork_grayscale]:
+                eq = art.equalize_hist(method='opencv')
+                eq_path = os.path.join(image_dir, f"{base_prefix}_eq_{art.__class__.__name__}.jpg")
+                cv2.imwrite(eq_path, eq.image)
+
+            logging.info(f"Обработка изображения {num} завершена (ID: {object_id})")
+
+        except Exception as e:
+            logging.error(f"Ошибка обработки изображения {num} (ID: {object_id}): {e}", exc_info=True)
+
+    async def _download_one_image(
+            self,
+            session: aiohttp.ClientSession,
+            idx: int,
+            object_id: str,
+            output_dir: str,
+            semaphore: Optional[asyncio.Semaphore] = None,
+    ) -> Optional[dict]:
+        num = idx + 1
+
+        try:
+            if semaphore:
+                async with semaphore:
+                    return await self._do_download(session, num, object_id, output_dir)
+            else:
+                return await self._do_download(session, num, object_id, output_dir)
+        except Exception as e:
+            logging.error(f"Ошибка скачивания изображения {num} (ID: {object_id}): {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    async def _do_download(
+            session: aiohttp.ClientSession,
+            num: int,
+            object_id: str,
+            output_dir: str
+    ) -> dict:
+        logging.info(f"Скачивание изображения {num} начато (ID: {object_id})")
+
+        meta_url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
+        async with session.get(meta_url) as response:
+            response.raise_for_status()
+            metadata = await response.json()
 
         primary_image = metadata.get('primaryImage')
         if not primary_image:
             raise ValueError(f"У объекта {object_id} отсутствует primaryImage")
 
-        img_path = os.path.join(output_dir, 'image.jpg')
-        logging.info(f"Скачивание изображения: {primary_image}")
-        download_image(primary_image, img_path)
-        logging.info(f"Изображение сохранено в {img_path}")
+        async with session.get(primary_image) as response:
+            response.raise_for_status()
+            image_data = await response.read()
 
-        image = cv2.imread(img_path)
+        img_dir = os.path.join(output_dir, f"{num}_{object_id}")
+        os.makedirs(img_dir, exist_ok=True)
 
-        json_path = os.path.join(output_dir, 'image.json')
-        save_metadata(metadata, json_path)
-        logging.info(f"Метаданные сохранены в {json_path}")
+        orig_path = os.path.join(img_dir, f"{num}_{object_id}_original.jpg")
+        meta_path = os.path.join(img_dir, f"{num}_{object_id}_metadata.json")
 
-        if image.ndim == 3:
-            artwork = ColorArtwork(image, metadata)
-        elif image.ndim == 2:
-            artwork = GrayscaleArtwork(image, metadata)
-        else:
-            raise ValueError(f"Неподдерживаемая размерность изображения: {image.shape}")
+        async with aiofiles.open(orig_path, 'wb') as f:
+            await f.write(image_data)
+        async with aiofiles.open(meta_path, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(metadata, indent=2, ensure_ascii=False))
 
-        logging.info(f"Создан объект: {artwork}")
-        return artwork
+        logging.info(f"Скачивание изображения {num} завершено (ID: {object_id})")
+        return {
+            'idx': num - 1,
+            'num': num,
+            'object_id': object_id,
+            'image_path': orig_path,
+            'image_dir': img_dir,
+            'metadata': metadata,
+        }
 
-    @timeit
-    def process_artwork(self, artwork: Artwork, output_dir: str, prefix: str = '') -> None:
-        logging.info(f"Начало обработки изображения с префиксом '{prefix}' в {output_dir}...")
+    async def _get_images(self, painting_ids: list) -> AsyncGenerator[dict]:
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                self._download_one_image(session, idx, obj_id, self._output_dir, self._download_semaphore)
+                for idx, obj_id in enumerate(painting_ids)
+            ]
+            for coro in asyncio.as_completed(tasks):
+                result = await coro
+                if result is not None:
+                    yield result
 
-        orig_path = os.path.join(output_dir, f'image_{prefix}_original.jpg')
-        cv2.imwrite(orig_path, artwork.image)
-        logging.info(f"Оригинал изображения сохранен в {orig_path}")
+    async def run_pipeline(self, num_paintings: int) -> None:
+        if os.path.exists(self._output_dir):
+            logging.info(f"Очистка папки {self._output_dir}...")
+            shutil.rmtree(self._output_dir)
+        os.makedirs(self._output_dir, exist_ok=True)
 
-        sharpen_kernel = np.array([
-            [0, -1, 0],
-            [-1, 5, -1],
-            [0, -1, 0],
-        ], dtype=np.float32)
-        ksize = 3
-        sigma = 1.0
-        gamma = 0.5
-
-        operations_manual = [
-            (artwork.grayscale, 'grayscale_manual', {'method': 'manual'}),
-            (artwork.convolve, 'convolve_manual', {'kernel': sharpen_kernel, 'method': 'manual'}),
-            (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
-            (artwork.sobel, 'sobel_mag_manual', {'method': 'manual'}),
-            (artwork.gamma_correction, f'gamma_manual_g{gamma}', {'gamma': gamma, 'method': 'manual'}),
-            (artwork.equalize_hist, 'eq_hist_manual', {'method': 'manual'}),
-        ]
-
-        operations_opencv = [
-            (artwork.grayscale, 'grayscale_opencv', {'method': 'opencv'}),
-            (artwork.convolve, 'convolve_opencv', {'kernel': sharpen_kernel, 'method': 'opencv'}),
-            (artwork.gaussian, f'gaussian_opencv_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'opencv'}),
-            (artwork.sobel, 'sobel_mag_opencv', {'method': 'opencv'}),
-            (artwork.gamma_correction, f'gamma_opencv_g{gamma}', {'gamma': gamma, 'method': 'opencv'}),
-            (artwork.equalize_hist, 'eq_hist_opencv', {'method': 'opencv'}),
-        ]
-
-        logging.info(f"Обработка изображения ручными методами")
-        for function, suffix, kwargs in operations_manual:
-            result = function(**kwargs)
-            out_path = os.path.join(output_dir, f'image_{prefix}_{suffix}.jpg')
-            cv2.imwrite(out_path, result.image)
-        logging.info(f"Обработка изображения ручными методами завершена")
-
-        logging.info(f"Обработка изображения opencv методами")
-        for function, suffix, kwargs in operations_opencv:
-            result = function(**kwargs)
-            out_path = os.path.join(output_dir, f'image_{prefix}_{suffix}.jpg')
-            cv2.imwrite(out_path, result.image)
-        logging.info(f"Обработка изображения opencv методами завершена")
-
-        logging.info(f"Обработка с префиксом '{prefix}' в {output_dir} завершена.")
-
-    @timeit
-    def run_pipeline(self, num_paintings: int = 1) -> None:
+        start = time.perf_counter()
         logging.info(f"Запуск пайплайна обработки {num_paintings} изображений")
 
-        for i in range(num_paintings):
-            object_id = get_painting_id(self._csv_path)
-            logging.info(f"Обработка картины {i+1}/{num_paintings} (ID: {object_id})")
+        logging.info("Загрузка ID изображений...")
+        painting_ids = self._load_painting_ids(self._csv_path, num_paintings)
+        logging.info("Загрузка ID изображений завершена...")
 
-            painting_dir = os.path.join(self._output_dir, object_id)
-            os.makedirs(painting_dir, exist_ok=True)
+        for i, pid in enumerate(painting_ids):
+            logging.info(f"Изображению {i+1} присвоено ID: {pid}")
 
-            logging.info(f"Скачивание изображения {object_id}")
-            artwork_original = self.download_painting_by_id(object_id, painting_dir)
-            logging.info(f"Скачивание изображения {object_id} завершено")
+        with ProcessPoolExecutor() as executor:
+            loop = asyncio.get_running_loop()
+            tasks = []
 
-            logging.info("Обработка оригинального изображения")
-            self.process_artwork(artwork_original, painting_dir, prefix='color')
-            logging.info("Обработка оригинального изображения завершена")
+            async for result in self._get_images(painting_ids):
+                task_data = (
+                    result['idx'],
+                    result['object_id'],
+                    result['image_path'],
+                    result['image_dir'],
+                    result['metadata'],
+                )
 
-            logging.info("Обработка ЧБ изображения")
-            artwork_grayscale = artwork_original.grayscale()
-            self.process_artwork(artwork_original, painting_dir, prefix='gray')
-            logging.info("Обработка ЧБ изображения завершена")
+                tasks.append(
+                    loop.run_in_executor(executor, self._process_artwork_in_subprocess, task_data)
+                )
 
-            logging.info("Создание sobel-версии artwork")
-            artwork_sobel = artwork_grayscale.sobel()
-            logging.info("Создание sobel-версии artwork завершено")
+            await asyncio.gather(*tasks)
 
-            logging.info("Сложение оригинального и sobel artwork")
-            artwork_sum = artwork_original + artwork_sobel
-            sum_path = os.path.join(painting_dir, 'image_original_plus_sobel.jpg')
-            cv2.imwrite(sum_path, artwork_sum.image)
-            logging.info(f"Результат сложения сохранен в {sum_path}")
+        elapsed = time.perf_counter() - start
+        logging.info(f"Общее время работы: {elapsed:.2f} секунд")
+        logging.info("Пайплайн успешно завершён")
 
-            logging.info("Демонстрация полиморфизма: выравнивание гистограммы для разных типов")
-            for a in [artwork_original, artwork_grayscale]:
-                eq = a.equalize_hist(method='opencv')
-                out_path = os.path.join(painting_dir, f'image_eq_{a.__class__.__name__}.jpg')
-                cv2.imwrite(out_path, eq.image)
-                logging.info(f"Сохранён результат для {a.__class__.__name__} в {out_path}")
 
-        logging.info("Пайплайн успешно завершен")
+def main():
+    if len(sys.argv) == 2:
+        try:
+            num_images = int(sys.argv[1])
+        except ValueError:
+            print("Аргумент должен быть целым числом.")
+            sys.exit(1)
+    else:
+        print("Использование: python artwork.py <количество_изображений>")
+        sys.exit(1)
+
+    processor = ImageProcessor()
+    asyncio.run(processor.run_pipeline(num_images))
 
 
 if __name__ == '__main__':
-    processor = ImageProcessor()
-    processor.run_pipeline(num_paintings=3)
+    main()
