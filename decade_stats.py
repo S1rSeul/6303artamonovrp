@@ -8,8 +8,8 @@ import numpy as np
 
 import pandas as pd
 
+from logging_config import configure_logging
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def extract_year(series: pd.Series) -> pd.Series:
@@ -59,17 +59,17 @@ def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
 
         elapsed = time.perf_counter() - start
         total_elapsed += elapsed
-        logging.info(f"Чанк {chunk_count}: обработано {original_len} строк, оставлено {kept}, время {elapsed:.3f} сек")
+        logging.debug(f"Чанк {chunk_count}: обработано {original_len} строк, оставлено {kept}, время {elapsed:.3f} сек")
 
         if not chunk.empty:
             total_rows_processed += kept
             yield chunk
 
-    logging.info(f"Всего прочитано строк: {total_rows}, обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
+    logging.debug(f"Всего прочитано строк: {total_rows}, обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
 
 
 def aggregate(processed_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
-    logging.info("Начало агрегации данных...")
+    logging.debug("Начало агрегации данных...")
     total_elapsed = 0.0
 
     stats_df = pd.DataFrame()
@@ -93,16 +93,16 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
 
         chunk_elapsed = time.perf_counter() - chunk_start
         total_elapsed += chunk_elapsed
-        logging.info(f"Агрегация чанка {chunk_counter} заняла {chunk_elapsed:.3f} сек")
+        logging.debug(f"Агрегация чанка {chunk_counter} заняла {chunk_elapsed:.3f} сек")
 
     stats_df['count'] = stats_df['count'].astype('int32')
 
-    logging.info(f"Агрегация завершена за {total_elapsed:.3f} сек")
+    logging.debug(f"Агрегация завершена за {total_elapsed:.3f} сек")
     return stats_df
 
 
 def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
-    logging.info("Расчет статистик...")
+    logging.debug("Расчет статистик...")
     start = time.perf_counter()
 
     n = stats_df['count']
@@ -122,7 +122,7 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     stats['count'] = stats['count'].astype('int32')
 
     elapsed = time.perf_counter() - start
-    logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats_df)} десятилетий")
+    logging.debug(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats_df)} десятилетий")
     return stats
 
 
@@ -175,7 +175,7 @@ def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
     total_start = time.perf_counter()
     logging.info(f"Начало обработки файла: {csv_path}")
 
-    logging.info("Чтение и обработка чанков...")
+    logging.debug("Чтение и обработка чанков...")
     chunks = read_chunks(csv_path, chunksize)
     processed = process_chunk(chunks)
     stats_df = aggregate(processed)
@@ -183,7 +183,7 @@ def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
     stats = compute_statistics(stats_df)
     stats = stats.sort_index()
 
-    logging.info("Формирование и вывод результатов...")
+    logging.debug("Формирование и вывод результатов...")
 
     print("\nСтатистика по десятилетиям:")
     for row in stats.itertuples():
@@ -198,7 +198,10 @@ def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
     plot_decade_stats(stats)
     plot_decade_differences(stats)
 
+    logging.info(f"Обработка файла {csv_path} успешно завершена")
+
 
 if __name__ == "__main__":
+    configure_logging()
     csv = "MetObjects.csv"
     run_pipeline(csv)

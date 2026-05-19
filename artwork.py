@@ -22,12 +22,11 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from logging_config import configure_logging
+
 
 ImageU8 = NDArray[np.uint8]
 ImageF32 = NDArray[np.float32]
-
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - PID %(process)d - %(levelname)s - %(message)s')
 
 
 class Artwork(ABC):
@@ -259,11 +258,13 @@ class ImageProcessor:
 
     @staticmethod
     def _process_artwork_in_subprocess(task_data: tuple) -> None:
+        configure_logging()
+
         idx, object_id, image_path, image_dir, metadata = task_data
         num = idx + 1
 
         try:
-            logging.info(f"Обработка изображения {num} начата (ID: {object_id})")
+            logging.debug(f"Обработка изображения {num} начата (ID: {object_id})")
 
             image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
             if image is None:
@@ -287,29 +288,28 @@ class ImageProcessor:
             sigma = 1.0
             gamma = 0.5
 
-            # operations_manual = [
-            #     (artwork.grayscale, 'grayscale_manual', {'method': 'manual'}),
-            #     (artwork.convolve, 'convolve_manual', {'kernel': sharpen_kernel, 'method': 'manual'}),
-            #     (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
-            #     (artwork.sobel, 'sobel_mag_manual', {'method': 'manual'}),
-            #     (artwork.gamma_correction, f'gamma_manual_g{gamma}', {'gamma': gamma, 'method': 'manual'}),
-            #     (artwork.equalize_hist, 'eq_hist_manual', {'method': 'manual'}),
-            # ]
+            operations_manual = [
+                (artwork.grayscale, 'grayscale_manual', {'method': 'manual'}),
+                (artwork.convolve, 'convolve_manual', {'kernel': sharpen_kernel, 'method': 'manual'}),
+                (artwork.gaussian, f'gaussian_manual_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'manual'}),
+                (artwork.sobel, 'sobel_mag_manual', {'method': 'manual'}),
+                (artwork.gamma_correction, f'gamma_manual_g{gamma}', {'gamma': gamma, 'method': 'manual'}),
+                (artwork.equalize_hist, 'eq_hist_manual', {'method': 'manual'}),
+            ]
 
             operations_opencv = [
                 (artwork.grayscale, 'grayscale_opencv', {'method': 'opencv'}),
                 (artwork.convolve, 'convolve_opencv', {'kernel': sharpen_kernel, 'method': 'opencv'}),
-                (artwork.gaussian, f'gaussian_opencv_ks{ksize}_s{sigma}',
-                 {'ksize': ksize, 'sigma': sigma, 'method': 'opencv'}),
+                (artwork.gaussian, f'gaussian_opencv_ks{ksize}_s{sigma}', {'ksize': ksize, 'sigma': sigma, 'method': 'opencv'}),
                 (artwork.sobel, 'sobel_mag_opencv', {'method': 'opencv'}),
                 (artwork.gamma_correction, f'gamma_opencv_g{gamma}', {'gamma': gamma, 'method': 'opencv'}),
                 (artwork.equalize_hist, 'eq_hist_opencv', {'method': 'opencv'}),
             ]
 
-            # for function, suffix, kwargs in operations_manual:
-            #     result = function(**kwargs)
-            #     out_path = os.path.join(image_dir, f"{base_prefix}_{suffix}.jpg")
-            #     cv2.imwrite(out_path, result.image)
+            for function, suffix, kwargs in operations_manual:
+                result = function(**kwargs)
+                out_path = os.path.join(image_dir, f"{base_prefix}_{suffix}.jpg")
+                cv2.imwrite(out_path, result.image)
 
             for function, suffix, kwargs in operations_opencv:
                 result = function(**kwargs)
@@ -333,7 +333,7 @@ class ImageProcessor:
                 eq_path = os.path.join(image_dir, f"{base_prefix}_eq_{art.__class__.__name__}.jpg")
                 cv2.imwrite(eq_path, eq.image)
 
-            logging.info(f"Обработка изображения {num} завершена (ID: {object_id})")
+            logging.debug(f"Обработка изображения {num} завершена (ID: {object_id})")
 
         except Exception as e:
             logging.error(f"Ошибка обработки изображения {num} (ID: {object_id}): {e}", exc_info=True)
@@ -365,7 +365,7 @@ class ImageProcessor:
             object_id: str,
             output_dir: str
     ) -> dict:
-        logging.info(f"Скачивание изображения {num} начато (ID: {object_id})")
+        logging.debug(f"Скачивание изображения {num} начато (ID: {object_id})")
 
         meta_url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
         async with session.get(meta_url) as response:
@@ -391,7 +391,7 @@ class ImageProcessor:
         async with aiofiles.open(meta_path, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(metadata, indent=2, ensure_ascii=False))
 
-        logging.info(f"Скачивание изображения {num} завершено (ID: {object_id})")
+        logging.debug(f"Скачивание изображения {num} завершено (ID: {object_id})")
         return {
             'idx': num - 1,
             'num': num,
@@ -414,19 +414,19 @@ class ImageProcessor:
 
     async def run_pipeline(self, num_paintings: int) -> None:
         if os.path.exists(self._output_dir):
-            logging.info(f"Очистка папки {self._output_dir}...")
+            logging.debug(f"Очистка папки {self._output_dir}...")
             shutil.rmtree(self._output_dir)
         os.makedirs(self._output_dir, exist_ok=True)
 
         start = time.perf_counter()
         logging.info(f"Запуск пайплайна обработки {num_paintings} изображений")
 
-        logging.info("Загрузка ID изображений...")
+        logging.debug("Загрузка ID изображений...")
         painting_ids = self._load_painting_ids(self._csv_path, num_paintings)
-        logging.info("Загрузка ID изображений завершена...")
+        logging.debug("Загрузка ID изображений завершена...")
 
         for i, pid in enumerate(painting_ids):
-            logging.info(f"Изображению {i+1} присвоено ID: {pid}")
+            logging.debug(f"Изображению {i+1} присвоено ID: {pid}")
 
         with ProcessPoolExecutor() as executor:
             loop = asyncio.get_running_loop()
@@ -468,4 +468,5 @@ def main():
 
 
 if __name__ == '__main__':
+    configure_logging()
     main()
