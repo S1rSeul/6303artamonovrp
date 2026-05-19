@@ -246,7 +246,7 @@ class ImageProcessor:
         self._download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
     @staticmethod
-    def _load_painting_ids(csv_path: str, count: int) -> List[str]:
+    def _load_painting_ids(csv_path: str, count: Optional[int] = None) -> List[str]:
         random.seed(1)
 
         paintings = []
@@ -254,7 +254,9 @@ class ImageProcessor:
             for row in csv.DictReader(f):
                 if row.get('Classification') == 'Paintings' and row.get('Is Public Domain') == 'True':
                     paintings.append(row.get("Object ID"))
-        return random.sample(paintings, count)
+        if count is None:
+            return paintings
+        return random.sample(paintings, min(count, len(paintings)))
 
     @staticmethod
     def _process_artwork_in_subprocess(task_data: tuple) -> None:
@@ -412,18 +414,14 @@ class ImageProcessor:
                 if result is not None:
                     yield result
 
-    async def run_pipeline(self, num_paintings: int) -> None:
+    async def run_pipeline(self, painting_ids: List[str]) -> None:
         if os.path.exists(self._output_dir):
             logging.debug(f"Очистка папки {self._output_dir}...")
             shutil.rmtree(self._output_dir)
         os.makedirs(self._output_dir, exist_ok=True)
 
         start = time.perf_counter()
-        logging.info(f"Запуск пайплайна обработки {num_paintings} изображений")
-
-        logging.debug("Загрузка ID изображений...")
-        painting_ids = self._load_painting_ids(self._csv_path, num_paintings)
-        logging.debug("Загрузка ID изображений завершена...")
+        logging.info(f"Запуск пайплайна обработки {len(painting_ids)} изображений")
 
         for i, pid in enumerate(painting_ids):
             logging.debug(f"Изображению {i+1} присвоено ID: {pid}")
@@ -450,23 +448,3 @@ class ImageProcessor:
         elapsed = time.perf_counter() - start
         logging.info(f"Общее время работы: {elapsed:.2f} секунд")
         logging.info("Пайплайн успешно завершён")
-
-
-def main():
-    if len(sys.argv) == 2:
-        try:
-            num_images = int(sys.argv[1])
-        except ValueError:
-            print("Аргумент должен быть целым числом.")
-            sys.exit(1)
-    else:
-        print("Использование: python artwork.py <количество_изображений>")
-        sys.exit(1)
-
-    processor = ImageProcessor()
-    asyncio.run(processor.run_pipeline(num_images))
-
-
-if __name__ == '__main__':
-    configure_logging()
-    main()

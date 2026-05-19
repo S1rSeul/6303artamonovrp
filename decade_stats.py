@@ -1,6 +1,7 @@
 import logging
+import os
 import time
-from typing import Iterator
+from typing import Iterator, Optional
 
 import matplotlib.pyplot as plt
 
@@ -126,7 +127,7 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     return stats
 
 
-def plot_decade_stats(stats_df: pd.DataFrame) -> None:
+def plot_decade_stats(stats_df: pd.DataFrame, output_dir: Optional[str] = None) -> None:
     decades = stats_df.index.values
     means = stats_df['mean'].values
     ci_errs = stats_df['ci_err'].values
@@ -146,10 +147,18 @@ def plot_decade_stats(stats_df: pd.DataFrame) -> None:
     ax.legend()
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
-    plt.show()
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, 'decade_stats.png')
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+        logging.info(f"График сохранен: {path}")
+        plt.close()
+    else:
+        plt.show()
 
 
-def plot_decade_differences(stats_df: pd.DataFrame) -> None:
+def plot_decade_differences(stats_df: pd.DataFrame, output_dir: Optional[str] = None) -> None:
     decades = stats_df.index.values
 
     if len(decades) < 2:
@@ -168,10 +177,18 @@ def plot_decade_differences(stats_df: pd.DataFrame) -> None:
     ax.set_title('Динамика изменения среднего возраста приобретаемых объектов\n(отличие от предыдущего десятилетия)')
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
-    plt.show()
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, 'decade_differences.png')
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+        logging.info(f"График сохранен: {path}")
+        plt.close()
+    else:
+        plt.show()
 
 
-def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
+def run_pipeline(csv_path: str, chunksize: int = 50_000, output_dir: Optional[str] = None) -> None:
     total_start = time.perf_counter()
     logging.info(f"Начало обработки файла: {csv_path}")
 
@@ -195,13 +212,7 @@ def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
     total_elapsed = time.perf_counter() - total_start
     logging.info(f"Общее время выполнения: {total_elapsed:.3f} сек")
 
-    plot_decade_stats(stats)
-    plot_decade_differences(stats)
+    plot_decade_stats(stats, output_dir)
+    plot_decade_differences(stats, output_dir)
 
     logging.info(f"Обработка файла {csv_path} успешно завершена")
-
-
-if __name__ == "__main__":
-    configure_logging()
-    csv = "MetObjects.csv"
-    run_pipeline(csv)

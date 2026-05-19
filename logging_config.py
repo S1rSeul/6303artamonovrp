@@ -13,7 +13,7 @@ class ModuleFilter(logging.Filter):
 
 
 def configure_logging(log_file: str = 'app.log') -> None:
-    modules = {'artwork.py', 'decade_stats.py', 'logging_config.py'}
+    modules = {'artwork.py', 'decade_stats.py', 'logging_config.py', 'cli.py'}
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
