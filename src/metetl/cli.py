@@ -5,9 +5,9 @@ import logging
 import os
 import sys
 
-from artwork import ImageProcessor
-from decade_stats import run_pipeline as run_analysis
-from logging_config import configure_logging
+from metetl.images.processing import ImageProcessor
+from metetl.analysis.aggregations import run_pipeline as run_analysis
+from metetl.logging_config import configure_logging
 
 
 def cmd_prepare(args):

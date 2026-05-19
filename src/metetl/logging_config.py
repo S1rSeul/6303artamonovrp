@@ -12,8 +12,9 @@ class ModuleFilter(logging.Filter):
         return record.filename in self.allowed_filenames
 
 
-def configure_logging(log_file: str = 'app.log') -> None:
-    modules = {'artwork.py', 'decade_stats.py', 'logging_config.py', 'cli.py'}
+def configure_logging(log_file: str = 'logs/metetl.log') -> None:
+    modules = {"cli.py", "data_to_download.py", "aggregations.py",
+                   "models.py", "processing.py", "__main__.py", "logging_config.py"}
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
