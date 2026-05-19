@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from typing import Set
 
@@ -13,6 +14,10 @@ class ModuleFilter(logging.Filter):
 
 
 def configure_logging(log_file: str = 'logs/metetl.log') -> None:
+    log_dir = os.path.dirname(log_file)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
     modules = {"cli.py", "data_to_download.py", "aggregations.py",
                    "models.py", "processing.py", "__main__.py", "logging_config.py"}
 

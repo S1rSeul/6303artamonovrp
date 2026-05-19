@@ -19,4 +19,4 @@
 ### Из TestPyPI
 
 ```bash
-pip install --index-url https://test.pypi.org/simple/metetl-artamonov-6303
+pip install -i https://test.pypi.org/simple/ metetl-artamonov-6303
