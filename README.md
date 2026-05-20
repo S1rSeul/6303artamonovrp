@@ -25,5 +25,5 @@ pip install -e .
 ### Из TestPyPI
 
 ```bash
-pip install -i https://test.pypi.org/simple/ metetl-artamonov-6303
+pip install -i https://test.pypi.org/simple/ metetl-artamonov-6303 --extra-index-url https://pypi.org/simple/ metetl-artamonov-6303
 ```
