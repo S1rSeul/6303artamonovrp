@@ -1,4 +1,4 @@
-# METETL
+# MET ETL
 
 Утилита командной строки для скачивания, обработки и анализа изображений из открытой коллекции Метрополитен-музея (The Metropolitan Museum of Art).
 
@@ -16,7 +16,14 @@
 
 ## Установка
 
+### Локально
+
+```bash
+pip install -e .
+```
+
 ### Из TestPyPI
 
 ```bash
 pip install -i https://test.pypi.org/simple/ metetl-artamonov-6303
+```
