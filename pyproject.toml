@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metetl-artamonov-6303"
+version = "0.1.2"
+description = "Скачивание, обработка и анализ изображений из коллекции Метрополитен-музея"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "aiohttp",
+    "aiofiles",
+    "opencv-python",
+    "numpy",
+    "pandas",
+    "matplotlib",
+]
+
+[project.scripts]
+metetl = "metetl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

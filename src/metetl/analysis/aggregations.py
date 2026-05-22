@@ -1,6 +1,7 @@
 import logging
+import os
 import time
-from typing import Iterator
+from typing import Iterator, Optional
 
 import matplotlib.pyplot as plt
 
@@ -8,68 +9,11 @@ import numpy as np
 
 import pandas as pd
 
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-def extract_year(series: pd.Series) -> pd.Series:
-    years = pd.to_numeric(series, errors='coerce')
-    mask = years.isna()
-
-    if mask.any():
-        dates = pd.to_datetime(series[mask], errors='coerce')
-        years.loc[mask] = dates.dt.year
-
-    return years.astype('Int32')
-
-
-def read_chunks(filepath: str, chunksize: int = 50_000) -> Iterator[pd.DataFrame]:
-    dtype = {
-        'AccessionYear': 'string',
-        'Object Begin Date': 'string',
-    }
-    usecols = ['AccessionYear', 'Object Begin Date']
-    reader = pd.read_csv(filepath, chunksize=chunksize, low_memory=False, dtype=dtype, usecols=usecols)
-    for chunk in reader:
-        yield chunk
-
-
-def process_chunk(chunk_iter: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
-    chunk_count = 0
-    total_rows = 0
-    total_rows_processed = 0
-    total_elapsed = 0.0
-
-    for chunk in chunk_iter:
-        chunk_count += 1
-        start = time.perf_counter()
-
-        chunk['AccessionYear'] = extract_year(chunk['AccessionYear'])
-        chunk['Object Begin Date'] = extract_year(chunk['Object Begin Date'])
-        chunk['age'] = chunk['AccessionYear'] - chunk['Object Begin Date']
-        chunk.drop('Object Begin Date', axis=1, inplace=True)
-        chunk.loc[chunk['age'] < 0, 'age'] = np.nan
-
-        original_len = len(chunk)
-        total_rows += original_len
-
-        chunk.dropna(subset=['age'], inplace=True)
-        chunk['age_square'] = chunk['age'] ** 2
-        kept = len(chunk)
-
-        elapsed = time.perf_counter() - start
-        total_elapsed += elapsed
-        logging.info(f"Чанк {chunk_count}: обработано {original_len} строк, оставлено {kept}, время {elapsed:.3f} сек")
-
-        if not chunk.empty:
-            total_rows_processed += kept
-            yield chunk
-
-    logging.info(f"Всего прочитано строк: {total_rows}, обработано строк: {total_rows_processed}, общее время обработки: {total_elapsed:.3f} сек")
+from metetl.analysis.data_to_download import read_chunks, process_chunk
 
 
 def aggregate(processed_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
-    logging.info("Начало агрегации данных...")
+    logging.debug("Начало агрегации данных...")
     total_elapsed = 0.0
 
     stats_df = pd.DataFrame()
@@ -93,16 +37,16 @@ def aggregate(processed_iter: Iterator[pd.DataFrame]) -> pd.DataFrame:
 
         chunk_elapsed = time.perf_counter() - chunk_start
         total_elapsed += chunk_elapsed
-        logging.info(f"Агрегация чанка {chunk_counter} заняла {chunk_elapsed:.3f} сек")
+        logging.debug(f"Агрегация чанка {chunk_counter} заняла {chunk_elapsed:.3f} сек")
 
     stats_df['count'] = stats_df['count'].astype('int32')
 
-    logging.info(f"Агрегация завершена за {total_elapsed:.3f} сек")
+    logging.debug(f"Агрегация завершена за {total_elapsed:.3f} сек")
     return stats_df
 
 
 def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
-    logging.info("Расчет статистик...")
+    logging.debug("Расчет статистик...")
     start = time.perf_counter()
 
     n = stats_df['count']
@@ -122,11 +66,11 @@ def compute_statistics(stats_df: pd.DataFrame) -> pd.DataFrame:
     stats['count'] = stats['count'].astype('int32')
 
     elapsed = time.perf_counter() - start
-    logging.info(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats_df)} десятилетий")
+    logging.debug(f"Расчет статистик завершен за {elapsed:.3f} сек, обработано {len(stats_df)} десятилетий")
     return stats
 
 
-def plot_decade_stats(stats_df: pd.DataFrame) -> None:
+def plot_decade_stats(stats_df: pd.DataFrame, output_dir: Optional[str] = None) -> None:
     decades = stats_df.index.values
     means = stats_df['mean'].values
     ci_errs = stats_df['ci_err'].values
@@ -146,10 +90,18 @@ def plot_decade_stats(stats_df: pd.DataFrame) -> None:
     ax.legend()
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
-    plt.show()
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, 'decade_stats.png')
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+        logging.info(f"График сохранен: {path}")
+        plt.close()
+    else:
+        plt.show()
 
 
-def plot_decade_differences(stats_df: pd.DataFrame) -> None:
+def plot_decade_differences(stats_df: pd.DataFrame, output_dir: Optional[str] = None) -> None:
     decades = stats_df.index.values
 
     if len(decades) < 2:
@@ -168,14 +120,22 @@ def plot_decade_differences(stats_df: pd.DataFrame) -> None:
     ax.set_title('Динамика изменения среднего возраста приобретаемых объектов\n(отличие от предыдущего десятилетия)')
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
-    plt.show()
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, 'decade_differences.png')
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+        logging.info(f"График сохранен: {path}")
+        plt.close()
+    else:
+        plt.show()
 
 
-def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
+def run_pipeline(csv_path: str, chunksize: int = 50_000, output_dir: Optional[str] = None) -> None:
     total_start = time.perf_counter()
     logging.info(f"Начало обработки файла: {csv_path}")
 
-    logging.info("Чтение и обработка чанков...")
+    logging.debug("Чтение и обработка чанков...")
     chunks = read_chunks(csv_path, chunksize)
     processed = process_chunk(chunks)
     stats_df = aggregate(processed)
@@ -183,7 +143,7 @@ def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
     stats = compute_statistics(stats_df)
     stats = stats.sort_index()
 
-    logging.info("Формирование и вывод результатов...")
+    logging.debug("Формирование и вывод результатов...")
 
     print("\nСтатистика по десятилетиям:")
     for row in stats.itertuples():
@@ -195,10 +155,13 @@ def run_pipeline(csv_path: str, chunksize: int = 50_000) -> None:
     total_elapsed = time.perf_counter() - total_start
     logging.info(f"Общее время выполнения: {total_elapsed:.3f} сек")
 
-    plot_decade_stats(stats)
-    plot_decade_differences(stats)
+    if output_dir:
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        plot_decade_stats(stats, output_dir)
+        plot_decade_differences(stats, output_dir)
+    else:
+        plot_decade_stats(stats)
+        plot_decade_differences(stats)
 
-
-if __name__ == "__main__":
-    csv = "MetObjects.csv"
-    run_pipeline(csv)
+    logging.info(f"Обработка файла {csv_path} успешно завершена")
